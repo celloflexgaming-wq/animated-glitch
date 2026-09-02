@@ -7,8 +7,9 @@ import os
 import math
 import io
 
+# Setup van de pagina
 st.set_page_config(
-    page_title="Smooth Glitch Studio",
+    page_title="Time Stretch Studio (Anton Repponen Stijl)",
     layout="centered"
 )
 
@@ -33,7 +34,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🎞️ Smooth Glitch Studio")
+st.title("🎞️ Time Stretch Studio (Anton Repponen Stijl)")
 
 uploaded = st.file_uploader(
     "Upload een foto",
@@ -52,15 +53,15 @@ if uploaded:
     st.markdown("---")
     mode = st.radio(
         "Kies wat je wilt genereren:",
-        ["🎥 Glitch Video (MP4)", "🖼️ Glitch Foto (Statisch)"],
+        ["🎥 Time Stretch Video (Moving Mosaic)", "🖼️ Time Stretch Foto (Static Mosaic)"],
         horizontal=True
     )
     st.markdown("---")
 
     # =========================================
-    # MODUS 1: STATISCHE GLITCH FOTO
+    # MODUS 1: STATISCHE TIME STRETCH FOTO (Static Mosaic)
     # =========================================
-    if mode == "🖼️ Glitch Foto (Statisch)":
+    if mode == "🖼️ Time Stretch Foto (Static Mosaic)":
         st.subheader("⚙️ Foto-instellingen")
 
         resolution_photo = st.selectbox(
@@ -73,23 +74,32 @@ if uploaded:
             index=0
         )
 
-        bands_count_photo = st.slider(
-            "Aantal glitch-banden (bepaalt streepdikte)",
+        num_variations_photo = st.slider(
+            "Aantal gesimuleerde frames (Variaties voor mozaïek)",
+            5,
             20,
-            200,
-            80,
-            key="photo_bands"
+            10,
+            key="photo_variations"
         )
         
-        segment_complexity_photo = st.slider(
-            "Glitch complexiteit (Aantal splitsingen per streep)",
-            1,
-            8,
-            3,
-            key="photo_complexity"
+        scanline_orientation_photo = st.radio(
+            "Scanline Oriëntatie",
+            ["Horizontaal", "Verticaal"],
+            index=1,
+            key="photo_orientation"
         )
 
-        if st.button("🖼️ Genereer Glitch Foto", type="primary"):
+        variation_type_photo = st.radio(
+            "Variatie Type",
+            ["Kleurverschuiving"],
+            index=0,
+            key="photo_var_type"
+        )
+
+        # De 'glitch banden' sliders zijn vervangen door een inherent concept van 1-pixel scanlines.
+
+        if st.button("🖼️ Genereer Time Stretch Foto", type="primary"):
+            # Resolutie en crop logica (behouden)
             if "1920" in resolution_photo:
                 target_w, target_h = 1920, 1080
             elif "1280" in resolution_photo:
@@ -112,70 +122,69 @@ if uploaded:
 
                 img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
+            # --- NIEUWE LOGICA VOOR TIME STRETCH FOTO ---
             img_array = np.array(img, dtype=np.uint8)
             height, width, _ = img_array.shape
+            
+            # Stap 1: Genereer N gesimuleerde frames door middel van kleurverschuiving
+            variations = []
+            if variation_type_photo == "Kleurverschuiving":
+                for _ in range(num_variations_photo):
+                    # Simuleer variatie door elke pixel te vermenigvuldigen met een willekeurige kleur
+                    color_shift = np.random.uniform(0.8, 1.2, (1, 1, 3))
+                    varied = (img_array * color_shift).clip(0, 255).astype(np.uint8)
+                    variations.append(varied)
+            
+            # Stap 2: Pas een pixel-brede stretch toe op elk frame om de basis-textuur te creëren
+            # Elke horizontale scanline wordt nu een 1-pixel-brede stretched blok.
+            pre_stretched_variations = []
+            for v in variations:
+                v_h, v_w, _ = v.shape
+                # We passen horizontalen stretch toe op 1-pixel banden.
+                stretched_frame = np.zeros_like(v)
+                for y in range(v_h):
+                    sample_x = np.random.randint(0, v_w)
+                    single_pixel_column = v[y:y+1, sample_x:sample_x+1, :]
+                    stretched_frame[y, :, :] = np.repeat(single_pixel_column, v_w, axis=1)
+                pre_stretched_variations.append(stretched_frame)
+            
+            # Stap 3: Creëer het uiteindelijke mozaïek door scanlines van de andere oriëntatie te samplen
+            output_array = np.zeros_like(img_array)
+            if scanline_orientation_photo == "Verticaal":
+                # Mozaïek van verticale scanlines (meest vergelijkbaar met de voorbeelden)
+                for x in range(width):
+                    # Kies het gesimuleerde frame op basis van de positie (modulo)
+                    frame_idx = x % num_variations_photo
+                    sample_stretched_v = pre_stretched_variations[frame_idx]
+                    
+                    # Sample die specifieke verticale kolom en paste hem
+                    sample_column = sample_stretched_v[:, x, :]
+                    output_array[:, x, :] = sample_column
+            else:
+                # Mozaïek van horizontale scanlines
+                for y in range(height):
+                    frame_idx = y % num_variations_photo
+                    sample_stretched_h = pre_stretched_variations[frame_idx]
+                    
+                    sample_row = sample_stretched_h[y, :, :]
+                    output_array[y, :, :] = sample_row
 
-            rng = np.random.default_rng()
-            band_edges = np.linspace(0, height, bands_count_photo + 1).astype(int)
-            static_frame = np.zeros_like(img_array)
-
-            for i in range(bands_count_photo):
-                y_start = band_edges[i]
-                y_end = band_edges[i + 1]
-                band_height = y_end - y_start
-
-                if band_height <= 0:
-                    continue
-
-                band_row = np.zeros((band_height, width, 3), dtype=np.uint8)
-                num_segments = int(rng.integers(1, segment_complexity_photo + 1))
-
-                if num_segments == 1:
-                    splits = [0, width]
-                else:
-                    split_points = sorted(
-                        rng.choice(
-                            np.arange(1, width),
-                            size=num_segments - 1,
-                            replace=False
-                        ).tolist()
-                    )
-                    splits = [0] + split_points + [width]
-
-                for j in range(len(splits) - 1):
-                    x_start = splits[j]
-                    x_end = splits[j + 1]
-
-                    if x_end <= x_start:
-                        continue
-
-                    sample_x = int(rng.integers(x_start, x_end))
-                    source = img_array[y_start:y_end, sample_x:sample_x + 1, :]
-
-                    band_row[:, x_start:x_end, :] = np.repeat(
-                        source,
-                        x_end - x_start,
-                        axis=1
-                    )
-
-                static_frame[y_start:y_end, :, :] = band_row
-
-            result_img = Image.fromarray(static_frame)
-            st.image(result_img, caption="Gegenereerde Glitch Foto", use_container_width=True)
+            result_img = Image.fromarray(output_array)
+            st.image(result_img, caption="Gegenereerde Time Stretch Foto (Static Mosaic)", use_container_width=True)
 
             buf = io.BytesIO()
             result_img.save(buf, format="PNG")
             st.download_button(
-                label="⬇️ Download Glitch Foto (PNG)",
+                label="⬇️ Download Time Stretch Foto (PNG)",
                 data=buf.getvalue(),
-                file_name="glitch_foto.png",
+                file_name="time_stretch_foto.png",
                 mime="image/png"
             )
 
     # =========================================
-    # MODUS 2: GLITCH VIDEO (MP4)
+    # MODUS 2: TIME STRETCH VIDEO (MP4, Moving Mosaic)
     # =========================================
-    elif mode == "🎥 Glitch Video (MP4)":
+    elif mode == "🎥 Time Stretch Video (Moving Mosaic)":
         st.subheader("⚙️ Video-instellingen")
 
         resolution = st.selectbox(
@@ -194,11 +203,10 @@ if uploaded:
             target_width = 1280
             target_height = 720
 
-        # Uitgebreide duur opties (tot 60 seconden)
         duration = st.selectbox(
             "Duur (seconden)",
-            [5, 10, 15, 20, 30, 45, 60],
-            index=2
+            [5, 10, 15, 20, 30],
+            index=1
         )
 
         fps = st.selectbox(
@@ -227,28 +235,24 @@ if uploaded:
             crf = 20
             preset = "medium"
 
-        bands_count = st.slider(
-            "Aantal horizontale glitch-banden (bepaalt streepdikte)",
+        num_variations_video = st.slider(
+            "Aantal gesimuleerde frames (Variaties voor mozaïek)",
+            5,
             20,
-            150,
-            60
+            10,
+            key="video_variations"
+        )
+        
+        mosaic_orientation_video = st.radio(
+            "Mosaic Oriëntatie",
+            ["Horizontaal", "Verticaal"],
+            index=1,
+            key="video_mosaic_orientation"
         )
 
-        segment_complexity_video = st.slider(
-            "Glitch complexiteit (Aantal segmenten per band)",
-            1,
-            6,
-            3
-        )
+        # De 'glitch banden', 'complexiteit' en 'snelheid' sliders zijn vervangen door deze logica.
 
-        speed = st.slider(
-            "Animatiesnelheid",
-            1,
-            8,
-            3
-        )
-
-        if st.button("🎬 Maak Full HD video", type="primary"):
+        if st.button("🎬 Maak Full HD Time Stretch video", type="primary"):
             source_ratio = img.width / img.height
             target_ratio = target_width / target_height
 
@@ -274,61 +278,26 @@ if uploaded:
             st.write(f"**Frames:** {total_frames}")
             st.write(f"**Kwaliteit:** CRF {crf} / {preset}")
 
-            rng = np.random.default_rng(42)
-            band_edges = np.linspace(0, height, bands_count + 1).astype(int)
-            bands = []
-
-            for i in range(bands_count):
-                y_start = band_edges[i]
-                y_end = band_edges[i + 1]
-                band_height = y_end - y_start
-
-                if band_height <= 0:
-                    continue
-
-                band_row = np.zeros((band_height, width, 3), dtype=np.uint8)
-                num_segments = int(rng.integers(1, segment_complexity_video + 1))
-
-                if num_segments == 1:
-                    splits = [0, width]
-                else:
-                    split_points = sorted(
-                        rng.choice(
-                            np.arange(1, width),
-                            size=num_segments - 1,
-                            replace=False
-                        ).tolist()
-                    )
-                    splits = [0] + split_points + [width]
-
-                for j in range(len(splits) - 1):
-                    x_start = splits[j]
-                    x_end = splits[j + 1]
-
-                    if x_end <= x_start:
-                        continue
-
-                    sample_x = int(rng.integers(x_start, x_end))
-                    source = img_array[y_start:y_end, sample_x:sample_x + 1, :]
-
-                    band_row[:, x_start:x_end, :] = np.repeat(
-                        source,
-                        x_end - x_start,
-                        axis=1
-                    )
-
-                direction = int(rng.choice([-1, 1]))
-                cycles = int(rng.integers(1, speed + 1))
-                phase = float(rng.random())
-
-                bands.append({
-                    "y_start": y_start,
-                    "y_end": y_end,
-                    "row": band_row,
-                    "direction": direction,
-                    "cycles": cycles,
-                    "phase": phase
-                })
+            # --- NIEUWE LOGICA VOOR TIME STRETCH VIDEO ---
+            
+            # Stap 1: Pre-genereer N gesimuleerde frames (variaties) door kleurverschuiving
+            # We gebruiken dezelfde logica als bij de foto.
+            variations = []
+            for _ in range(num_variations_video):
+                color_shift = np.random.uniform(0.8, 1.2, (1, 1, 3))
+                varied = (img_array * color_shift).clip(0, 255).astype(np.uint8)
+                variations.append(varied)
+            
+            # Stap 2: Pre-genereer pre-stretched basistextuur voor elk frame
+            pre_stretched_variations = []
+            for v in variations:
+                v_h, v_w, _ = v.shape
+                stretched_frame = np.zeros_like(v)
+                for y in range(v_h):
+                    sample_x = np.random.randint(0, v_w)
+                    single_pixel_column = v[y:y+1, sample_x:sample_x+1, :]
+                    stretched_frame[y, :, :] = np.repeat(single_pixel_column, v_w, axis=1)
+                pre_stretched_variations.append(stretched_frame)
 
             progress = st.progress(0)
             output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
@@ -361,24 +330,30 @@ if uploaded:
             )
 
             try:
+                # Stap 3: Genereer de video frame voor frame met een gedetailleerd rollend mozaïek
                 for frame_number in range(total_frames):
                     t = frame_number / fps
-                    frame = np.zeros_like(img_array)
+                    frame_out = np.zeros_like(img_array)
 
-                    for band in bands:
-                        y1 = band["y_start"]
-                        y2 = band["y_end"]
-                        band_row = band["row"]
-                        direction = band["direction"]
-                        cycles = band["cycles"]
-                        phase = band["phase"]
+                    if mosaic_orientation_video == "Verticaal":
+                        # Verticaal mosaic dat rollend wordt gevormd
+                        for x in range(width):
+                            # Het frame-nummer wordt toegevoegd aan de modulo om de animatie te creëren
+                            frame_idx = (x + frame_number) % num_variations_video
+                            sample_stretched_v = pre_stretched_variations[frame_idx]
+                            
+                            sample_column = sample_stretched_v[:, x, :]
+                            frame_out[:, x, :] = sample_column
+                    else:
+                        # Horizontaal mosaic dat rollend wordt gevormd
+                        for y in range(height):
+                            frame_idx = (y + frame_number) % num_variations_video
+                            sample_stretched_h = pre_stretched_variations[frame_idx]
+                            
+                            sample_row = sample_stretched_h[y, :, :]
+                            frame_out[y, :, :] = sample_row
 
-                        movement = 0.5 + 0.5 * math.sin(2 * math.pi * (cycles * t / duration + phase))
-                        shift = int((movement - 0.5) * width * direction)
-                        shifted = np.roll(band_row, shift, axis=1)
-                        frame[y1:y2, :, :] = shifted
-
-                    process.stdin.write(frame.tobytes())
+                    process.stdin.write(frame_out.tobytes())
 
                     if frame_number % max(1, fps // 2) == 0:
                         progress.progress(min(1.0, (frame_number + 1) / total_frames))
@@ -404,12 +379,12 @@ if uploaded:
             with open(output_path, "rb") as f:
                 video_bytes = f.read()
 
-            st.success("✅ Full HD video klaar!")
+            st.success("✅ Full HD Time Stretch video klaar!")
             st.video(video_bytes)
             st.download_button(
                 label="⬇️ Download MP4 in maximale kwaliteit",
                 data=video_bytes,
-                file_name="smooth_glitch_full_hd.mp4",
+                file_name="time_stretch_moving_mosaic.mp4",
                 mime="video/mp4"
             )
 
