@@ -12,19 +12,20 @@ import shutil
 # =========================================================
 
 st.set_page_config(
-    page_title="Smooth Pixel Stretch",
-    page_icon="〰️",
+    page_title="Animated Glitch",
+    page_icon="🎞️",
     layout="centered"
 )
 
-st.title("〰️ Smooth Pixel Stretch")
+st.title("🎞️ Animated Glitch")
 st.write(
-    "Vloeiende horizontale pixel-stretches die over het beeld bewegen."
+    "De volledige foto wordt omgezet in vloeiende bewegende "
+    "pixel-stretch banden."
 )
 
 
 # =========================================================
-# FOTO
+# FOTO UPLOAD
 # =========================================================
 
 uploaded_file = st.file_uploader(
@@ -33,7 +34,7 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is None:
-    st.info("Upload een foto om te beginnen.")
+    st.info("Upload hierboven een foto om te beginnen.")
     st.stop()
 
 
@@ -41,7 +42,7 @@ if uploaded_file is None:
 # INSTELLINGEN
 # =========================================================
 
-st.subheader("⚙️ Instellingen")
+st.subheader("⚙️ Video instellingen")
 
 col1, col2 = st.columns(2)
 
@@ -75,41 +76,32 @@ with col2:
     )
 
 
-st.subheader("〰️ Stretch-effect")
+st.subheader("⚡ Glitch instellingen")
 
-band_amount = st.slider(
-    "Aantal bewegende strepen",
-    5,
-    40,
-    18
+intensity = st.slider(
+    "Aantal glitch-banden",
+    min_value=20,
+    max_value=150,
+    value=70
 )
 
-stretch_amount = st.slider(
-    "Stretch lengte",
-    1.0,
-    8.0,
-    3.5,
-    0.1
+segments = st.slider(
+    "Stroken per band",
+    min_value=1,
+    max_value=6,
+    value=3
 )
 
-movement_speed = st.slider(
+speed = st.slider(
     "Bewegingssnelheid",
-    0.2,
-    2.0,
-    0.8,
-    0.1
-)
-
-band_thickness = st.slider(
-    "Dikte van de strepen",
-    1,
-    10,
-    4
+    min_value=1,
+    max_value=8,
+    value=4
 )
 
 
 # =========================================================
-# AFBEELDING LADEN
+# FOTO LADEN
 # =========================================================
 
 try:
@@ -125,18 +117,19 @@ except Exception as e:
     st.stop()
 
 
-original_width, original_height = image.size
-
-
 # =========================================================
 # RESIZE
 # =========================================================
+
+original_width, original_height = image.size
+
 
 if original_width > max_width:
 
     scale = max_width / original_width
 
     width = max_width
+
     height = int(
         original_height * scale
     )
@@ -183,56 +176,36 @@ st.write(
 
 
 # =========================================================
-# RANDOM GENERATOR
+# GLITCH BANDEN MAKEN
+#
+# BELANGRIJK:
+# Het volledige beeld wordt verdeeld over banden.
+# Er blijft dus GEEN normaal gedeelte over.
 # =========================================================
 
-rng = np.random.default_rng(49281)
-
-
-# =========================================================
-# STRETCH BANDS VOORBEREIDEN
-# =========================================================
+rng = np.random.default_rng(47291)
 
 bands = []
 
 
-for i in range(band_amount):
+# Verdeel volledige hoogte
+# exact over alle banden.
 
-    # Willekeurige verticale positie
-    y_center = rng.uniform(
-        0,
-        height
-    )
+band_edges = np.linspace(
+    0,
+    height,
+    intensity + 1
+).astype(int)
 
-    # Dikte met kleine variatie
-    thickness = int(
-        max(
-            1,
-            rng.uniform(
-                0.5,
-                1.5
-            )
-            * band_thickness
-            * max(
-                1,
-                height / 500
-            )
-        )
-    )
 
+for band_index in range(intensity):
 
     y1 = int(
-        max(
-            0,
-            y_center - thickness / 2
-        )
+        band_edges[band_index]
     )
 
     y2 = int(
-        min(
-            height,
-            y1 + thickness
-        )
+        band_edges[band_index + 1]
     )
 
 
@@ -240,113 +213,152 @@ for i in range(band_amount):
         continue
 
 
+    band_height = y2 - y1
+
+
     # -----------------------------------------------------
-    # Bronpositie
+    # Willekeurige horizontale segmenten
     # -----------------------------------------------------
 
-    source_y = int(
-        np.clip(
-            y_center,
-            0,
-            height - 1
+    possible_splits = np.arange(
+        1,
+        width
+    )
+
+
+    split_count = min(
+        segments - 1,
+        len(possible_splits)
+    )
+
+
+    if split_count > 0:
+
+        split_points = sorted(
+            rng.choice(
+                possible_splits,
+                size=split_count,
+                replace=False
+            ).tolist()
         )
+
+    else:
+
+        split_points = []
+
+
+    split_points = (
+        [0]
+        + split_points
+        + [width]
     )
 
 
-    # Eén horizontale lijn uit de foto
-    source_line = img[
-        source_y:source_y + 1,
-        :,
-        :
-    ]
+    band_segments = []
 
 
-    # Maak een horizontale strook
-    source_line = np.repeat(
-        source_line,
-        y2 - y1,
-        axis=0
-    )
+    for segment_index in range(
+        len(split_points) - 1
+    ):
 
-
-    # -----------------------------------------------------
-    # Stretch grootte
-    # -----------------------------------------------------
-
-    stretch_factor = rng.uniform(
-        1.5,
-        stretch_amount
-    )
-
-
-    stretch_width = int(
-        width * stretch_factor
-    )
-
-
-    # Herhaal de foto horizontaal
-    repeats = int(
-        np.ceil(
-            stretch_width / width
+        x1 = int(
+            split_points[segment_index]
         )
-    )
 
-
-    stretched = np.tile(
-        source_line,
-        (1, repeats, 1)
-    )
-
-
-    stretched = stretched[
-        :,
-        :stretch_width,
-        :
-    ]
-
-
-    # -----------------------------------------------------
-    # Bewegingsparameters
-    # -----------------------------------------------------
-
-    direction = int(
-        rng.choice(
-            [-1, 1]
+        x2 = int(
+            split_points[segment_index + 1]
         )
-    )
 
 
-    # Verschillende snelheden
-    speed = rng.uniform(
-        0.55,
-        1.35
-    )
+        if x2 <= x1:
+            continue
 
 
-    # Verschillende startfase
-    phase = rng.uniform(
-        0,
-        2 * np.pi
-    )
+        # -------------------------------------------------
+        # Kies willekeurige verticale bronkolom
+        # -------------------------------------------------
+
+        source_x = int(
+            rng.integers(
+                x1,
+                max(
+                    x1 + 1,
+                    x2
+                )
+            )
+        )
 
 
-    # Verticale fade
-    alpha = rng.uniform(
-        0.65,
-        1.0
-    )
+        # -------------------------------------------------
+        # Neem verticale pixelstrook
+        # -------------------------------------------------
+
+        source = img[
+            y1:y2,
+            source_x:source_x + 1,
+            :
+        ]
+
+
+        # -------------------------------------------------
+        # Stretch deze pixel horizontaal
+        # -------------------------------------------------
+
+        segment_width = x2 - x1
+
+
+        stretched = np.repeat(
+            source,
+            segment_width,
+            axis=1
+        )
+
+
+        # -------------------------------------------------
+        # Bewegingsparameters
+        # -------------------------------------------------
+
+        direction = int(
+            rng.choice(
+                [-1, 1]
+            )
+        )
+
+
+        # Iedere band een eigen aantal bewegingen
+        cycles = float(
+            rng.uniform(
+                0.6,
+                1.8
+            )
+            * speed
+            / 4.0
+        )
+
+
+        # Willekeurige startpositie
+        phase = float(
+            rng.random()
+        )
+
+
+        band_segments.append(
+            {
+                "x1": x1,
+                "x2": x2,
+                "data": stretched,
+                "direction": direction,
+                "cycles": cycles,
+                "phase": phase
+            }
+        )
 
 
     bands.append(
         {
             "y1": y1,
             "y2": y2,
-            "data": stretched,
-            "stretch_width": stretch_width,
-            "direction": direction,
-            "speed": speed,
-            "phase": phase,
-            "alpha": alpha
+            "segments": band_segments
         }
     )
 
@@ -372,25 +384,25 @@ else:
 
 
 # =========================================================
-# TEMP DIRECTORY
+# TEMPORARY DIRECTORY
 # =========================================================
 
 temp_dir = tempfile.mkdtemp(
-    prefix="smooth_glitch_"
+    prefix="animated_glitch_"
 )
 
 output_path = os.path.join(
     temp_dir,
-    "smooth_pixel_stretch.mp4"
+    "animated_glitch.mp4"
 )
 
 
 # =========================================================
-# RENDER BUTTON
+# GENERATE
 # =========================================================
 
 if st.button(
-    "🎬 Genereer Smooth Glitch Video",
+    "🎬 Genereer 15 seconden glitch-video",
     type="primary",
     use_container_width=True
 ):
@@ -463,16 +475,21 @@ if st.button(
 
 
         # =================================================
-        # FRAMES
+        # FRAMES GENEREREN
         # =================================================
 
         for frame_index in range(
             frames_total
         ):
 
-            # ---------------------------------------------
-            # LOOP-POSITIE
-            # ---------------------------------------------
+            # -------------------------------------------------
+            # Tijdpositie
+            #
+            # 0.0 -> begin
+            # bijna 1.0 -> einde
+            #
+            # Door sinusbeweging ontstaat een vloeiende loop.
+            # -------------------------------------------------
 
             t = (
                 frame_index
@@ -480,268 +497,151 @@ if st.button(
             )
 
 
-            # ---------------------------------------------
-            # Originele foto
-            # ---------------------------------------------
+            # -------------------------------------------------
+            # Nieuw frame
+            #
+            # We vullen het VOLLEDIG met glitch-banden.
+            # -------------------------------------------------
 
-            frame = img.copy()
+            frame = np.zeros_like(
+                img
+            )
 
 
-            # ---------------------------------------------
-            # Bewegende strepen
-            # ---------------------------------------------
+            # =================================================
+            # ELKE BAND
+            # =================================================
 
             for band in bands:
 
                 y1 = band["y1"]
                 y2 = band["y2"]
 
-                stretch_width = (
-                    band["stretch_width"]
-                )
+
+                # -------------------------------------------------
+                # ELK SEGMENT
+                # -------------------------------------------------
+
+                for segment in band["segments"]:
+
+                    x1 = segment["x1"]
+                    x2 = segment["x2"]
+
+                    segment_width = (
+                        x2 - x1
+                    )
 
 
-                # -----------------------------------------
-                # Zeer vloeiende sinusbeweging
-                # -----------------------------------------
+                    if segment_width <= 0:
+                        continue
 
-                wave = (
-                    np.sin(
+
+                    # -------------------------------------------------
+                    # VLOEIENDE SINUSBEWEGING
+                    #
+                    # Geen harde sprong van rechts terug naar links.
+                    # -------------------------------------------------
+
+                    phase = (
                         (
                             t
-                            * 2
+                            * 2.0
                             * np.pi
-                            * movement_speed
-                            * band["speed"]
+                            * segment["cycles"]
                         )
-                        + band["phase"]
-                    )
-                    + 1
-                ) / 2
-
-
-                # Van links naar rechts
-                # en terug.
-                #
-                # Hierdoor ontstaat geen harde reset.
-                position = (
-                    wave
-                    * max(
-                        1,
-                        stretch_width - width
-                    )
-                )
-
-
-                if band["direction"] < 0:
-
-                    position = (
-                        stretch_width
-                        - width
-                        - position
+                        +
+                        segment["phase"]
                     )
 
 
-                position = int(
-                    position
-                )
-
-
-                # -----------------------------------------
-                # Stuk uit stretched image
-                # -----------------------------------------
-
-                stretched = band["data"]
-
-
-                start = int(
-                    np.clip(
-                        position,
-                        0,
-                        max(
-                            0,
-                            stretch_width - width
+                    movement = (
+                        np.sin(
+                            phase
                         )
+                        + 1.0
+                    ) / 2.0
+
+
+                    # -------------------------------------------------
+                    # Richting
+                    # -------------------------------------------------
+
+                    if segment["direction"] > 0:
+
+                        shift = int(
+                            movement
+                            * max(
+                                1,
+                                segment_width - 1
+                            )
+                        )
+
+                    else:
+
+                        shift = int(
+                            (
+                                1.0
+                                - movement
+                            )
+                            * max(
+                                1,
+                                segment_width - 1
+                            )
+                        )
+
+
+                    # -------------------------------------------------
+                    # Beweeg de stretched pixels
+                    # -------------------------------------------------
+
+                    moving = np.roll(
+                        segment["data"],
+                        shift,
+                        axis=1
                     )
-                )
 
 
-                end = start + width
+                    # -------------------------------------------------
+                    # Hele segment vullen
+                    # -------------------------------------------------
 
-
-                if end > stretch_width:
-
-                    end = stretch_width
-
-                    start = (
-                        end - width
-                    )
-
-
-                moving_strip = stretched[
-                    :,
-                    start:end,
-                    :
-                ]
-
-
-                # Veiligheid
-                if moving_strip.shape[1] != width:
-
-                    continue
-
-
-                # -----------------------------------------
-                # Subtiel mengen met originele foto
-                # -----------------------------------------
-
-                alpha = band["alpha"]
-
-
-                original_strip = frame[
-                    y1:y2,
-                    :,
-                    :
-                ]
-
-
-                mixed = (
-                    original_strip.astype(
-                        np.float32
-                    )
-                    * (1.0 - alpha)
-                    +
-                    moving_strip.astype(
-                        np.float32
-                    )
-                    * alpha
-                )
-
-
-                frame[
-                    y1:y2,
-                    :,
-                    :
-                ] = np.clip(
-                    mixed,
-                    0,
-                    255
-                ).astype(
-                    np.uint8
-                )
+                    frame[
+                        y1:y2,
+                        x1:x2,
+                        :
+                    ] = moving[
+                        :,
+                        :segment_width,
+                        :
+                    ]
 
 
             # =================================================
-            # EXTRA SMOOTH LONG STRETCHES
+            # VEILIGHEID
+            #
+            # Mocht een pixelgebied niet gevuld zijn door
+            # afrondingen, dan vullen we het met de originele
+            # foto. Normaal gesproken gebeurt dit niet.
             # =================================================
 
-            # Een paar grotere lijnen bewegen door
-            # het hele beeld heen.
+            # Dit zorgt er tevens voor dat er nooit zwarte
+            # gaten ontstaan.
 
-            long_count = max(
-                1,
-                band_amount // 8
+            missing = np.all(
+                frame == 0,
+                axis=2
             )
 
 
-            for j in range(
-                long_count
+            if np.any(
+                missing
             ):
 
-                phase = (
-                    j * 1.7
-                )
-
-
-                wave = (
-                    np.sin(
-                        (
-                            t
-                            * 2
-                            * np.pi
-                            * movement_speed
-                            * 0.45
-                        )
-                        + phase
-                    )
-                    + 1
-                ) / 2
-
-
-                y = int(
-                    (
-                        (
-                            j + 0.5
-                        )
-                        / long_count
-                    )
-                    * height
-                )
-
-
-                thickness = max(
-                    1,
-                    int(
-                        height
-                        * 0.008
-                    )
-                )
-
-
-                y1 = max(
-                    0,
-                    y - thickness
-                )
-
-
-                y2 = min(
-                    height,
-                    y + thickness
-                )
-
-
-                # Horizontale shift
-                shift = int(
-                    (
-                        wave - 0.5
-                    )
-                    * width
-                    * 0.45
-                )
-
-
-                strip = frame[
-                    y1:y2,
-                    :,
-                    :
-                ]
-
-
-                shifted = np.roll(
-                    strip,
-                    shift,
-                    axis=1
-                )
-
-
-                # Heel subtiel mengen
                 frame[
-                    y1:y2,
-                    :,
-                    :
-                ] = (
-                    strip.astype(
-                        np.float32
-                    )
-                    * 0.35
-                    +
-                    shifted.astype(
-                        np.float32
-                    )
-                    * 0.65
-                ).astype(
-                    np.uint8
-                )
+                    missing
+                ] = img[
+                    missing
+                ]
 
 
             # =================================================
@@ -765,7 +665,7 @@ if st.button(
             progress.progress(
                 percent,
                 text=(
-                    f"〰️ Smooth frames renderen: "
+                    f"〰️ Glitch renderen: "
                     f"{frame_index + 1} / "
                     f"{frames_total}"
                 )
@@ -773,12 +673,13 @@ if st.button(
 
 
             status.write(
-                f"Frame {frame_index + 1} van {frames_total}"
+                f"Frame {frame_index + 1} van "
+                f"{frames_total}"
             )
 
 
         # =====================================================
-        # FFMPEG AFRONDEN
+        # FFMPEG AFSLUITEN
         # =====================================================
 
         process.stdin.close()
@@ -811,7 +712,7 @@ if st.button(
 
 
         # =====================================================
-        # RESULTAAT
+        # CONTROLEREN
         # =====================================================
 
         if not os.path.exists(
@@ -819,15 +720,19 @@ if st.button(
         ):
 
             st.error(
-                "❌ Het MP4-bestand is niet gevonden."
+                "❌ MP4-bestand ontbreekt."
             )
 
             st.stop()
 
 
+        # =====================================================
+        # SUCCES
+        # =====================================================
+
         progress.progress(
             1.0,
-            text="✅ Klaar!"
+            text="✅ Video klaar!"
         )
 
         status.empty()
@@ -839,7 +744,7 @@ if st.button(
 
 
         st.success(
-            "🎉 Smooth glitch-video is klaar!"
+            "🎉 Je volledige glitch-video is klaar!"
         )
 
 
@@ -850,7 +755,7 @@ if st.button(
 
 
         # =====================================================
-        # VIDEO PREVIEW
+        # VIDEO
         # =====================================================
 
         with open(
@@ -873,7 +778,7 @@ if st.button(
         st.download_button(
             label="⬇️ Download MP4",
             data=video_data,
-            file_name="smooth_pixel_stretch.mp4",
+            file_name="animated_glitch.mp4",
             mime="video/mp4",
             use_container_width=True
         )
