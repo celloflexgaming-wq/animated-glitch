@@ -6,6 +6,7 @@ import tempfile
 import os
 import math
 import io
+import gc  # Toegevoegd voor geheugenbeheer
 
 st.set_page_config(
     page_title="Architectural Stretch Studio",
@@ -49,11 +50,9 @@ def generate_architectural_blocks(width, height, num_cols, split_complexity, see
     """
     rng = np.random.default_rng(seed)
     
-    # 1. Bepaal de verticale scheidingslijnen (Kolommen)
     col_edges = [0]
     curr_x = 0
     while curr_x < width:
-        # Varieer de breedte van de kolommen licht
         step = max(2, int(rng.normal(width / num_cols, (width / num_cols) * 0.6)))
         curr_x += step
         if curr_x >= width - (width / num_cols * 0.2): 
@@ -62,14 +61,12 @@ def generate_architectural_blocks(width, height, num_cols, split_complexity, see
     col_edges.append(width)
     
     blocks = []
-    # 2. Loop door elke kolom en fragmenteer deze horizontaal
     for i in range(len(col_edges)-1):
         x1, x2 = col_edges[i], col_edges[i+1]
         
         y_edges = [0]
         curr_y = 0
         while curr_y < height:
-            # Kans dat een kolom horizontaal wordt doorgeknipt
             if rng.random() < split_complexity:
                 step = rng.integers(height // 20, height // 2)
                 curr_y += step
@@ -80,19 +77,17 @@ def generate_architectural_blocks(width, height, num_cols, split_complexity, see
                 break
         y_edges.append(height)
         
-        # 3. Genereer de uiteindelijke blok data
         for j in range(len(y_edges)-1):
             y1, y2 = y_edges[j], y_edges[j+1]
             
-            # Kies een start x-coördinaat om te samplen (dit bepaalt de kleur van het blok)
             sample_x = rng.integers(max(0, x1 - width//10), min(width, x2 + width//10))
             
             blocks.append({
                 'x1': x1, 'x2': x2, 
                 'y1': y1, 'y2': y2,
                 'base_sample_x': sample_x,
-                'phase': rng.random() * 2 * math.pi,  # Voor soepele video-animatie
-                'speed_mult': rng.uniform(0.3, 1.8)   # Ieder blok beweegt in video op eigen tempo
+                'phase': rng.random() * 2 * math.pi,
+                'speed_mult': rng.uniform(0.3, 1.8)
             })
             
     return blocks
@@ -129,22 +124,13 @@ if uploaded:
 
         col1, col2 = st.columns(2)
         with col1:
-            num_cols_photo = st.slider(
-                "Aantal Kolommen", 
-                min_value=5, max_value=120, value=40,
-                help="Bepaalt hoe dun/breed de verticale elementen zijn."
-            )
+            num_cols_photo = st.slider("Aantal Kolommen", min_value=5, max_value=120, value=40)
         with col2:
-            complexity_photo = st.slider(
-                "Horizontale Fragmentatie", 
-                min_value=0.0, max_value=1.0, value=0.4, step=0.05,
-                help="Hoe vaak de kolommen worden onderbroken door 'zwevende' blokken."
-            )
+            complexity_photo = st.slider("Horizontale Fragmentatie", min_value=0.0, max_value=1.0, value=0.4, step=0.05)
             
         seed_photo = st.number_input("Willekeur Seed (Verander voor een andere layout)", value=42)
 
         if st.button("🖼️ Genereer Kunstwerk", type="primary"):
-            # Resolutie en crop logica
             if "1920" in resolution_photo:
                 target_w, target_h = 1920, 1080
             elif "1280" in resolution_photo:
@@ -170,14 +156,11 @@ if uploaded:
             img_array = np.array(img, dtype=np.uint8)
             height, width, _ = img_array.shape
             
-            # Bouw de strakke blokken
             blocks = generate_architectural_blocks(width, height, num_cols_photo, complexity_photo, seed=seed_photo)
             
-            # Pas de stretch toe
             output_array = np.zeros_like(img_array)
             for b in blocks:
                 sx = np.clip(b['base_sample_x'], 0, width - 1)
-                # Pak een verticale 1-pixel brede strip en rek deze uit over de breedte van het blok
                 source_col = img_array[b['y1']:b['y2'], sx:sx+1, :]
                 output_array[b['y1']:b['y2'], b['x1']:b['x2'], :] = np.repeat(source_col, b['x2'] - b['x1'], axis=1)
 
@@ -199,28 +182,29 @@ if uploaded:
     elif mode == "🎥 Architecturale Video (MP4)":
         st.subheader("⚙️ Video & Animatie Instellingen")
 
-        resolution = st.selectbox("Videoresolutie", ["1920 × 1080 — Full HD", "1280 × 720 — HD"], index=0)
+        # Standaard opties iets teruggeschroefd voor cloud-stabiliteit
+        resolution = st.selectbox("Videoresolutie", ["1920 × 1080 — Full HD", "1280 × 720 — HD"], index=1)
         
         col_v1, col_v2 = st.columns(2)
         with col_v1:
-            duration = st.selectbox("Duur (seconden)", [5, 10, 15, 20, 30], index=1)
+            duration = st.selectbox("Duur (seconden)", [5, 10, 15, 20], index=1)
             num_cols_video = st.slider("Aantal Kolommen", 5, 120, 40)
             anim_speed = st.slider("Animatie Snelheid", 0.5, 5.0, 1.5, step=0.1)
             
         with col_v2:
-            fps = st.selectbox("FPS", [24, 30, 60], index=1)
+            fps = st.selectbox("FPS", [24, 30], index=0)
             complexity_video = st.slider("Horizontale Fragmentatie", 0.0, 1.0, 0.4, step=0.05)
-            pan_amount = st.slider("Scan Bereik", 0.01, 0.5, 0.1, step=0.01, help="Hoe ver de stretch door de originele foto scant.")
+            pan_amount = st.slider("Scan Bereik", 0.01, 0.5, 0.1, step=0.01)
 
-        quality = st.selectbox("Videokwaliteit", ["Maximale kwaliteit (CRF 12)", "Zeer hoge kwaliteit (CRF 16)", "Hoge kwaliteit (CRF 20)"], index=0)
+        quality = st.selectbox("Videokwaliteit", ["Zeer hoge kwaliteit (CRF 16)", "Hoge kwaliteit (CRF 20)", "Gemiddelde kwaliteit (CRF 24)"], index=1)
         seed_video = st.number_input("Layout Seed", value=42, key="seed_vid")
 
-        if quality.startswith("Max"):
-            crf, preset = 12, "slow"
-        elif quality.startswith("Zeer"):
+        if quality.startswith("Zeer"):
             crf, preset = 16, "medium"
-        else:
+        elif quality.startswith("Hoge"):
             crf, preset = 20, "medium"
+        else:
+            crf, preset = 24, "fast"
 
         if st.button("🎬 Maak Animatie (Renderen)", type="primary"):
             target_width = 1920 if resolution.startswith("1920") else 1280
@@ -246,7 +230,6 @@ if uploaded:
 
             st.write(f"**Bezig met voorbereiden...** ({width}×{height}, {total_frames} frames)")
             
-            # Genereer de blok-layout
             blocks = generate_architectural_blocks(width, height, num_cols_video, complexity_video, seed=seed_video)
 
             progress = st.progress(0)
@@ -264,17 +247,17 @@ if uploaded:
 
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
+            # Eén lege buffer die we continu gaan overschrijven (Geheugenoptimalisatie)
+            frame_out = np.zeros_like(img_array)
+
             try:
                 for frame_number in range(total_frames):
                     t = frame_number / fps
-                    frame_out = np.zeros_like(img_array)
 
                     for b in blocks:
-                        # Bereken de beweging (scan effect) voor dit specifieke blok d.m.v. een sinusgolf
                         offset = int(math.sin(t * anim_speed * b['speed_mult'] + b['phase']) * (width * pan_amount))
                         sx = np.clip(b['base_sample_x'] + offset, 0, width - 1)
                         
-                        # Pas de stretch toe
                         source_col = img_array[b['y1']:b['y2'], sx:sx+1, :]
                         frame_out[b['y1']:b['y2'], b['x1']:b['x2'], :] = np.repeat(source_col, b['x2'] - b['x1'], axis=1)
 
@@ -282,6 +265,7 @@ if uploaded:
 
                     if frame_number % max(1, fps // 4) == 0:
                         progress.progress(min(1.0, (frame_number + 1) / total_frames))
+                        gc.collect() # Forceert het vrijmaken van ongebruikt geheugen
 
                 process.stdin.close()
                 stderr = process.stderr.read()
