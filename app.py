@@ -1,11 +1,22 @@
 import streamlit as st
+import subprocess
 
-st.set_page_config(
-    page_title="Animated Glitch",
-    page_icon="🎞️",
-)
+st.title("🎬 FFmpeg test")
 
-st.title("🎞️ Animated Glitch")
-st.write("De Streamlit-app werkt!")
+try:
+    result = subprocess.run(
+        ["ffmpeg", "-version"],
+        capture_output=True,
+        text=True
+    )
 
-st.success("✅ Deployment is succesvol gestart.")
+    if result.returncode == 0:
+        st.success("✅ FFmpeg is beschikbaar!")
+        st.code(result.stdout.splitlines()[0])
+    else:
+        st.error("❌ FFmpeg is geïnstalleerd maar geeft een fout.")
+        st.code(result.stderr)
+
+except Exception as e:
+    st.error("❌ FFmpeg is niet gevonden.")
+    st.exception(e)
