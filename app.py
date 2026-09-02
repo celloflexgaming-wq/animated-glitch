@@ -30,7 +30,7 @@ if uploaded:
     )
 
     # -----------------------------------------
-    # MODUS SELECTIE (VIDEO OF STATISCHE FOTO)
+    # MODUS SELECTIE
     # -----------------------------------------
     st.markdown("---")
     mode = st.radio(
@@ -44,7 +44,7 @@ if uploaded:
     # MODUS 1: STATISCHE GLITCH FOTO
     # =========================================
     if mode == "🖼️ Glitch Foto (Statisch)":
-        st.subheader("⚙️ Foto-instellingen")
+        st.subheader("⚙️ Foto-instellingen (Standaard)")
 
         resolution_photo = st.selectbox(
             "Foto resolutie",
@@ -56,19 +56,28 @@ if uploaded:
             index=0
         )
 
+        # Standaard ingesteld op 80 (reset altijd bij herladen)
         bands_count_photo = st.slider(
-            "Aantal horizontale glitch-banden",
+            "Aantal glitch-banden (bepaalt streepdikte)",
             20,
             200,
             80,
             key="photo_bands"
+        )
+        
+        # Extra optie: Segment variatie voor foto
+        segment_complexity_photo = st.slider(
+            "Glitch complexiteit (Aantal splitsingen per streep)",
+            1,
+            8,
+            3,
+            key="photo_complexity"
         )
 
         if st.button(
             "🖼️ Genereer Glitch Foto",
             type="primary"
         ):
-            # Formaat bepalen
             if "1920" in resolution_photo:
                 target_w, target_h = 1920, 1080
             elif "1280" in resolution_photo:
@@ -76,7 +85,6 @@ if uploaded:
             else:
                 target_w, target_h = img.width, img.height
 
-            # Crop/Resize naar gekozen resolutie (net als bij video)
             source_ratio = img.width / img.height
             target_ratio = target_w / target_h
 
@@ -95,7 +103,6 @@ if uploaded:
             img_array = np.array(img, dtype=np.uint8)
             height, width, _ = img_array.shape
 
-            # Glitch banden genereren voor statisch beeld
             rng = np.random.default_rng()
             band_edges = np.linspace(0, height, bands_count_photo + 1).astype(int)
             static_frame = np.zeros_like(img_array)
@@ -109,7 +116,7 @@ if uploaded:
                     continue
 
                 band_row = np.zeros((band_height, width, 3), dtype=np.uint8)
-                num_segments = int(rng.integers(1, 6))
+                num_segments = int(rng.integers(1, segment_complexity_photo + 1))
 
                 if num_segments == 1:
                     splits = [0, width]
@@ -144,7 +151,6 @@ if uploaded:
             result_img = Image.fromarray(static_frame)
             st.image(result_img, caption="Gegenereerde Glitch Foto", use_container_width=True)
 
-            # Download knop voor statische foto
             buf = io.BytesIO()
             result_img.save(buf, format="PNG")
             st.download_button(
@@ -155,12 +161,12 @@ if uploaded:
             )
 
     # =========================================
-    # MODUS 2: GLITCH VIDEO (JOUW ORIGINELE SCRIPT)
+    # MODUS 2: GLITCH VIDEO (MP4)
     # =========================================
     elif mode == "🎥 Glitch Video (MP4)":
-        st.subheader("⚙️ Video-instellingen")
+        st.subheader("⚙️ Video-instellingen (Standaard)")
 
-        # RESOLUTIE
+        # RESOLUTIE (Standaard Full HD -> index=0)
         resolution = st.selectbox(
             "Videoresolutie",
             [
@@ -177,21 +183,21 @@ if uploaded:
             target_width = 1280
             target_height = 720
 
-        # DUUR
+        # DUUR (Standaard 15 sec -> index=2)
         duration = st.selectbox(
             "Duur",
             [5, 10, 15],
             index=2
         )
 
-        # FPS
+        # FPS (Standaard 30 -> index=1)
         fps = st.selectbox(
             "FPS",
             [24, 30, 60],
             index=1
         )
 
-        # KWALITEIT
+        # KWALITEIT (Standaard Maximale kwaliteit -> index=0)
         quality = st.selectbox(
             "Videokwaliteit",
             [
@@ -212,15 +218,23 @@ if uploaded:
             crf = 20
             preset = "medium"
 
-        # GLITCH BANDS
+        # GLITCH BANDS / STREEPDIKTE (Standaard op 60)
         bands_count = st.slider(
-            "Aantal horizontale glitch-banden",
+            "Aantal horizontale glitch-banden (bepaalt streepdikte)",
             20,
             150,
             60
         )
 
-        # SNELHEID
+        # EXTRA OPTIE: COMPLEXITEIT / BLOKKEN PER STREEP
+        segment_complexity_video = st.slider(
+            "Glitch complexiteit (Aantal segmenten per band)",
+            1,
+            6,
+            3
+        )
+
+        # SNELHEID (Standaard op 3)
         speed = st.slider(
             "Animatiesnelheid",
             1,
@@ -234,7 +248,6 @@ if uploaded:
             type="primary"
         ):
 
-            # FOTO NAAR 16:9
             source_ratio = img.width / img.height
             target_ratio = target_width / target_height
 
@@ -294,7 +307,7 @@ if uploaded:
                 )
 
                 num_segments = int(
-                    rng.integers(1, 6)
+                    rng.integers(1, segment_complexity_video + 1)
                 )
 
                 if num_segments == 1:
