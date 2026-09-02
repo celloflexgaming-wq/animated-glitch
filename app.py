@@ -194,9 +194,10 @@ if uploaded:
             target_width = 1280
             target_height = 720
 
+        # Uitgebreide duur opties (tot 60 seconden)
         duration = st.selectbox(
-            "Duur",
-            [5, 10, 15],
+            "Duur (seconden)",
+            [5, 10, 15, 20, 30, 45, 60],
             index=2
         )
 
