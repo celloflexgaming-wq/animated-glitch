@@ -7,9 +7,8 @@ import os
 import math
 import io
 
-# Setup van de pagina
 st.set_page_config(
-    page_title="Time Stretch Studio (Anton Repponen Stijl)",
+    page_title="Architectural Stretch Studio",
     layout="centered"
 )
 
@@ -34,12 +33,70 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🎞️ Time Stretch Studio (Anton Repponen Stijl)")
+st.title("🏛️ Architectural Stretch Studio")
+st.markdown("*Geïnspireerd door Anton Repponen's gestructureerde time-stretch esthetiek.*")
 
 uploaded = st.file_uploader(
     "Upload een foto",
     type=["jpg", "jpeg", "png", "webp"]
 )
+
+# --- KERN ALGORITME VOOR DE STIJL ---
+def generate_architectural_blocks(width, height, num_cols, split_complexity, seed=42):
+    """
+    Verdeelt het canvas in strakke rechthoekige blokken op basis van willekeur.
+    Elk blok onthoudt zijn coördinaten en waaruit het de kleur moet 'samplen'.
+    """
+    rng = np.random.default_rng(seed)
+    
+    # 1. Bepaal de verticale scheidingslijnen (Kolommen)
+    col_edges = [0]
+    curr_x = 0
+    while curr_x < width:
+        # Varieer de breedte van de kolommen licht
+        step = max(2, int(rng.normal(width / num_cols, (width / num_cols) * 0.6)))
+        curr_x += step
+        if curr_x >= width - (width / num_cols * 0.2): 
+            break
+        col_edges.append(curr_x)
+    col_edges.append(width)
+    
+    blocks = []
+    # 2. Loop door elke kolom en fragmenteer deze horizontaal
+    for i in range(len(col_edges)-1):
+        x1, x2 = col_edges[i], col_edges[i+1]
+        
+        y_edges = [0]
+        curr_y = 0
+        while curr_y < height:
+            # Kans dat een kolom horizontaal wordt doorgeknipt
+            if rng.random() < split_complexity:
+                step = rng.integers(height // 20, height // 2)
+                curr_y += step
+                if curr_y >= height - (height // 20):
+                    break
+                y_edges.append(curr_y)
+            else:
+                break
+        y_edges.append(height)
+        
+        # 3. Genereer de uiteindelijke blok data
+        for j in range(len(y_edges)-1):
+            y1, y2 = y_edges[j], y_edges[j+1]
+            
+            # Kies een start x-coördinaat om te samplen (dit bepaalt de kleur van het blok)
+            sample_x = rng.integers(max(0, x1 - width//10), min(width, x2 + width//10))
+            
+            blocks.append({
+                'x1': x1, 'x2': x2, 
+                'y1': y1, 'y2': y2,
+                'base_sample_x': sample_x,
+                'phase': rng.random() * 2 * math.pi,  # Voor soepele video-animatie
+                'speed_mult': rng.uniform(0.3, 1.8)   # Ieder blok beweegt in video op eigen tempo
+            })
+            
+    return blocks
+
 
 if uploaded:
     img = Image.open(uploaded).convert("RGB")
@@ -53,53 +110,41 @@ if uploaded:
     st.markdown("---")
     mode = st.radio(
         "Kies wat je wilt genereren:",
-        ["🎥 Time Stretch Video (Moving Mosaic)", "🖼️ Time Stretch Foto (Static Mosaic)"],
+        ["🖼️ Architecturale Foto (Statisch)", "🎥 Architecturale Video (MP4)"],
         horizontal=True
     )
     st.markdown("---")
 
     # =========================================
-    # MODUS 1: STATISCHE TIME STRETCH FOTO (Static Mosaic)
+    # MODUS 1: STATISCHE FOTO
     # =========================================
-    if mode == "🖼️ Time Stretch Foto (Static Mosaic)":
-        st.subheader("⚙️ Foto-instellingen")
+    if mode == "🖼️ Architecturale Foto (Statisch)":
+        st.subheader("⚙️ Vormgeving & Stijl")
 
         resolution_photo = st.selectbox(
             "Foto resolutie",
-            [
-                "1920 × 1080 — Full HD",
-                "1280 × 720 — HD",
-                "Originele beeldverhouding behouden"
-            ],
+            ["1920 × 1080 — Full HD", "1280 × 720 — HD", "Originele beeldverhouding behouden"],
             index=0
         )
 
-        num_variations_photo = st.slider(
-            "Aantal gesimuleerde frames (Variaties voor mozaïek)",
-            5,
-            20,
-            10,
-            key="photo_variations"
-        )
-        
-        scanline_orientation_photo = st.radio(
-            "Scanline Oriëntatie",
-            ["Horizontaal", "Verticaal"],
-            index=1,
-            key="photo_orientation"
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            num_cols_photo = st.slider(
+                "Aantal Kolommen", 
+                min_value=5, max_value=120, value=40,
+                help="Bepaalt hoe dun/breed de verticale elementen zijn."
+            )
+        with col2:
+            complexity_photo = st.slider(
+                "Horizontale Fragmentatie", 
+                min_value=0.0, max_value=1.0, value=0.4, step=0.05,
+                help="Hoe vaak de kolommen worden onderbroken door 'zwevende' blokken."
+            )
+            
+        seed_photo = st.number_input("Willekeur Seed (Verander voor een andere layout)", value=42)
 
-        variation_type_photo = st.radio(
-            "Variatie Type",
-            ["Kleurverschuiving"],
-            index=0,
-            key="photo_var_type"
-        )
-
-        # De 'glitch banden' sliders zijn vervangen door een inherent concept van 1-pixel scanlines.
-
-        if st.button("🖼️ Genereer Time Stretch Foto", type="primary"):
-            # Resolutie en crop logica (behouden)
+        if st.button("🖼️ Genereer Kunstwerk", type="primary"):
+            # Resolutie en crop logica
             if "1920" in resolution_photo:
                 target_w, target_h = 1920, 1080
             elif "1280" in resolution_photo:
@@ -122,137 +167,65 @@ if uploaded:
 
                 img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
-            # --- NIEUWE LOGICA VOOR TIME STRETCH FOTO ---
             img_array = np.array(img, dtype=np.uint8)
             height, width, _ = img_array.shape
             
-            # Stap 1: Genereer N gesimuleerde frames door middel van kleurverschuiving
-            variations = []
-            if variation_type_photo == "Kleurverschuiving":
-                for _ in range(num_variations_photo):
-                    # Simuleer variatie door elke pixel te vermenigvuldigen met een willekeurige kleur
-                    color_shift = np.random.uniform(0.8, 1.2, (1, 1, 3))
-                    varied = (img_array * color_shift).clip(0, 255).astype(np.uint8)
-                    variations.append(varied)
+            # Bouw de strakke blokken
+            blocks = generate_architectural_blocks(width, height, num_cols_photo, complexity_photo, seed=seed_photo)
             
-            # Stap 2: Pas een pixel-brede stretch toe op elk frame om de basis-textuur te creëren
-            # Elke horizontale scanline wordt nu een 1-pixel-brede stretched blok.
-            pre_stretched_variations = []
-            for v in variations:
-                v_h, v_w, _ = v.shape
-                # We passen horizontalen stretch toe op 1-pixel banden.
-                stretched_frame = np.zeros_like(v)
-                for y in range(v_h):
-                    sample_x = np.random.randint(0, v_w)
-                    single_pixel_column = v[y:y+1, sample_x:sample_x+1, :]
-                    stretched_frame[y, :, :] = np.repeat(single_pixel_column, v_w, axis=1)
-                pre_stretched_variations.append(stretched_frame)
-            
-            # Stap 3: Creëer het uiteindelijke mozaïek door scanlines van de andere oriëntatie te samplen
+            # Pas de stretch toe
             output_array = np.zeros_like(img_array)
-            if scanline_orientation_photo == "Verticaal":
-                # Mozaïek van verticale scanlines (meest vergelijkbaar met de voorbeelden)
-                for x in range(width):
-                    # Kies het gesimuleerde frame op basis van de positie (modulo)
-                    frame_idx = x % num_variations_photo
-                    sample_stretched_v = pre_stretched_variations[frame_idx]
-                    
-                    # Sample die specifieke verticale kolom en paste hem
-                    sample_column = sample_stretched_v[:, x, :]
-                    output_array[:, x, :] = sample_column
-            else:
-                # Mozaïek van horizontale scanlines
-                for y in range(height):
-                    frame_idx = y % num_variations_photo
-                    sample_stretched_h = pre_stretched_variations[frame_idx]
-                    
-                    sample_row = sample_stretched_h[y, :, :]
-                    output_array[y, :, :] = sample_row
+            for b in blocks:
+                sx = np.clip(b['base_sample_x'], 0, width - 1)
+                # Pak een verticale 1-pixel brede strip en rek deze uit over de breedte van het blok
+                source_col = img_array[b['y1']:b['y2'], sx:sx+1, :]
+                output_array[b['y1']:b['y2'], b['x1']:b['x2'], :] = np.repeat(source_col, b['x2'] - b['x1'], axis=1)
 
             result_img = Image.fromarray(output_array)
-            st.image(result_img, caption="Gegenereerde Time Stretch Foto (Static Mosaic)", use_container_width=True)
+            st.image(result_img, caption="Gegenereerd Architecturaal Meesterwerk", use_container_width=True)
 
             buf = io.BytesIO()
             result_img.save(buf, format="PNG")
             st.download_button(
-                label="⬇️ Download Time Stretch Foto (PNG)",
+                label="⬇️ Download Kunstwerk (PNG)",
                 data=buf.getvalue(),
-                file_name="time_stretch_foto.png",
+                file_name="architectural_stretch.png",
                 mime="image/png"
             )
 
     # =========================================
-    # MODUS 2: TIME STRETCH VIDEO (MP4, Moving Mosaic)
+    # MODUS 2: VIDEO (MP4)
     # =========================================
-    elif mode == "🎥 Time Stretch Video (Moving Mosaic)":
-        st.subheader("⚙️ Video-instellingen")
+    elif mode == "🎥 Architecturale Video (MP4)":
+        st.subheader("⚙️ Video & Animatie Instellingen")
 
-        resolution = st.selectbox(
-            "Videoresolutie",
-            [
-                "1920 × 1080 — Full HD",
-                "1280 × 720 — HD"
-            ],
-            index=0
-        )
-
-        if resolution.startswith("1920"):
-            target_width = 1920
-            target_height = 1080
-        else:
-            target_width = 1280
-            target_height = 720
-
-        duration = st.selectbox(
-            "Duur (seconden)",
-            [5, 10, 15, 20, 30],
-            index=1
-        )
-
-        fps = st.selectbox(
-            "FPS",
-            [24, 30, 60],
-            index=1
-        )
-
-        quality = st.selectbox(
-            "Videokwaliteit",
-            [
-                "Maximale kwaliteit",
-                "Zeer hoge kwaliteit",
-                "Hoge kwaliteit"
-            ],
-            index=0
-        )
-
-        if quality == "Maximale kwaliteit":
-            crf = 12
-            preset = "slow"
-        elif quality == "Zeer hoge kwaliteit":
-            crf = 16
-            preset = "medium"
-        else:
-            crf = 20
-            preset = "medium"
-
-        num_variations_video = st.slider(
-            "Aantal gesimuleerde frames (Variaties voor mozaïek)",
-            5,
-            20,
-            10,
-            key="video_variations"
-        )
+        resolution = st.selectbox("Videoresolutie", ["1920 × 1080 — Full HD", "1280 × 720 — HD"], index=0)
         
-        mosaic_orientation_video = st.radio(
-            "Mosaic Oriëntatie",
-            ["Horizontaal", "Verticaal"],
-            index=1,
-            key="video_mosaic_orientation"
-        )
+        col_v1, col_v2 = st.columns(2)
+        with col_v1:
+            duration = st.selectbox("Duur (seconden)", [5, 10, 15, 20, 30], index=1)
+            num_cols_video = st.slider("Aantal Kolommen", 5, 120, 40)
+            anim_speed = st.slider("Animatie Snelheid", 0.5, 5.0, 1.5, step=0.1)
+            
+        with col_v2:
+            fps = st.selectbox("FPS", [24, 30, 60], index=1)
+            complexity_video = st.slider("Horizontale Fragmentatie", 0.0, 1.0, 0.4, step=0.05)
+            pan_amount = st.slider("Scan Bereik", 0.01, 0.5, 0.1, step=0.01, help="Hoe ver de stretch door de originele foto scant.")
 
-        # De 'glitch banden', 'complexiteit' en 'snelheid' sliders zijn vervangen door deze logica.
+        quality = st.selectbox("Videokwaliteit", ["Maximale kwaliteit (CRF 12)", "Zeer hoge kwaliteit (CRF 16)", "Hoge kwaliteit (CRF 20)"], index=0)
+        seed_video = st.number_input("Layout Seed", value=42, key="seed_vid")
 
-        if st.button("🎬 Maak Full HD Time Stretch video", type="primary"):
+        if quality.startswith("Max"):
+            crf, preset = 12, "slow"
+        elif quality.startswith("Zeer"):
+            crf, preset = 16, "medium"
+        else:
+            crf, preset = 20, "medium"
+
+        if st.button("🎬 Maak Animatie (Renderen)", type="primary"):
+            target_width = 1920 if resolution.startswith("1920") else 1280
+            target_height = 1080 if resolution.startswith("1920") else 720
+
             source_ratio = img.width / img.height
             target_ratio = target_width / target_height
 
@@ -265,39 +238,16 @@ if uploaded:
                 top = (img.height - new_height) // 2
                 img = img.crop((0, top, img.width, top + new_height))
 
-            img = img.resize(
-                (target_width, target_height),
-                Image.Resampling.LANCZOS
-            )
+            img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
 
             img_array = np.array(img, dtype=np.uint8)
             height, width, channels = img_array.shape
             total_frames = int(duration * fps)
 
-            st.write(f"**Resolutie:** {width} × {height}")
-            st.write(f"**Frames:** {total_frames}")
-            st.write(f"**Kwaliteit:** CRF {crf} / {preset}")
-
-            # --- NIEUWE LOGICA VOOR TIME STRETCH VIDEO ---
+            st.write(f"**Bezig met voorbereiden...** ({width}×{height}, {total_frames} frames)")
             
-            # Stap 1: Pre-genereer N gesimuleerde frames (variaties) door kleurverschuiving
-            # We gebruiken dezelfde logica als bij de foto.
-            variations = []
-            for _ in range(num_variations_video):
-                color_shift = np.random.uniform(0.8, 1.2, (1, 1, 3))
-                varied = (img_array * color_shift).clip(0, 255).astype(np.uint8)
-                variations.append(varied)
-            
-            # Stap 2: Pre-genereer pre-stretched basistextuur voor elk frame
-            pre_stretched_variations = []
-            for v in variations:
-                v_h, v_w, _ = v.shape
-                stretched_frame = np.zeros_like(v)
-                for y in range(v_h):
-                    sample_x = np.random.randint(0, v_w)
-                    single_pixel_column = v[y:y+1, sample_x:sample_x+1, :]
-                    stretched_frame[y, :, :] = np.repeat(single_pixel_column, v_w, axis=1)
-                pre_stretched_variations.append(stretched_frame)
+            # Genereer de blok-layout
+            blocks = generate_architectural_blocks(width, height, num_cols_video, complexity_video, seed=seed_video)
 
             progress = st.progress(0)
             output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
@@ -305,57 +255,32 @@ if uploaded:
             output_file.close()
 
             command = [
-                "ffmpeg",
-                "-y",
-                "-loglevel", "error",
-                "-f", "rawvideo",
-                "-vcodec", "rawvideo",
-                "-pix_fmt", "rgb24",
-                "-s", f"{width}x{height}",
-                "-r", str(fps),
-                "-i", "-",
-                "-an",
-                "-c:v", "libx264",
-                "-preset", preset,
-                "-crf", str(crf),
-                "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart",
-                output_path
+                "ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo",
+                "-vcodec", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}",
+                "-r", str(fps), "-i", "-", "-an", "-c:v", "libx264",
+                "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart", output_path
             ]
 
-            process = subprocess.Popen(
-                command,
-                stdin=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
             try:
-                # Stap 3: Genereer de video frame voor frame met een gedetailleerd rollend mozaïek
                 for frame_number in range(total_frames):
                     t = frame_number / fps
                     frame_out = np.zeros_like(img_array)
 
-                    if mosaic_orientation_video == "Verticaal":
-                        # Verticaal mosaic dat rollend wordt gevormd
-                        for x in range(width):
-                            # Het frame-nummer wordt toegevoegd aan de modulo om de animatie te creëren
-                            frame_idx = (x + frame_number) % num_variations_video
-                            sample_stretched_v = pre_stretched_variations[frame_idx]
-                            
-                            sample_column = sample_stretched_v[:, x, :]
-                            frame_out[:, x, :] = sample_column
-                    else:
-                        # Horizontaal mosaic dat rollend wordt gevormd
-                        for y in range(height):
-                            frame_idx = (y + frame_number) % num_variations_video
-                            sample_stretched_h = pre_stretched_variations[frame_idx]
-                            
-                            sample_row = sample_stretched_h[y, :, :]
-                            frame_out[y, :, :] = sample_row
+                    for b in blocks:
+                        # Bereken de beweging (scan effect) voor dit specifieke blok d.m.v. een sinusgolf
+                        offset = int(math.sin(t * anim_speed * b['speed_mult'] + b['phase']) * (width * pan_amount))
+                        sx = np.clip(b['base_sample_x'] + offset, 0, width - 1)
+                        
+                        # Pas de stretch toe
+                        source_col = img_array[b['y1']:b['y2'], sx:sx+1, :]
+                        frame_out[b['y1']:b['y2'], b['x1']:b['x2'], :] = np.repeat(source_col, b['x2'] - b['x1'], axis=1)
 
                     process.stdin.write(frame_out.tobytes())
 
-                    if frame_number % max(1, fps // 2) == 0:
+                    if frame_number % max(1, fps // 4) == 0:
                         progress.progress(min(1.0, (frame_number + 1) / total_frames))
 
                 process.stdin.close()
@@ -364,31 +289,26 @@ if uploaded:
 
                 if return_code != 0:
                     st.error("FFmpeg fout:\n\n" + stderr.decode("utf-8", errors="replace"))
-                    raise RuntimeError("FFmpeg kon de video niet maken.")
+                    raise RuntimeError("Kon video niet maken.")
 
             except Exception:
-                try:
-                    process.stdin.close()
-                except:
-                    pass
+                try: process.stdin.close()
+                except: pass
                 process.kill()
                 raise
 
             progress.progress(1.0)
-
             with open(output_path, "rb") as f:
                 video_bytes = f.read()
 
-            st.success("✅ Full HD Time Stretch video klaar!")
+            st.success("✅ Video renderen is voltooid!")
             st.video(video_bytes)
             st.download_button(
-                label="⬇️ Download MP4 in maximale kwaliteit",
+                label="⬇️ Download Geanimeerd Meesterwerk (MP4)",
                 data=video_bytes,
-                file_name="time_stretch_moving_mosaic.mp4",
+                file_name="architectural_stretch_anim.mp4",
                 mime="video/mp4"
             )
 
-            try:
-                os.remove(output_path)
-            except:
-                pass
+            try: os.remove(output_path)
+            except: pass
