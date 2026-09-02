@@ -9,7 +9,7 @@ import io
 import gc
 
 st.set_page_config(
-    page_title="100% Time Stretch Studio",
+    page_title="Repponen Extrusion Studio",
     layout="centered"
 )
 
@@ -32,67 +32,91 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🏙️ Pure Time Stretch Studio")
-st.markdown("*100% abstracte stretch-dekking over het hele canvas, verdeeld in strakke asymmetrische blokken.*")
+st.title("🏙️ The Repponen Extrusion Studio")
+st.markdown("*Exacte recreatie van 'Time Stretched': Intacte architectuur waarvan de randen horizontaal in het oneindige worden uitgesmeerd.*")
 
 uploaded = st.file_uploader(
     "Upload een foto",
     type=["jpg", "jpeg", "png", "webp"]
 )
 
-def generate_pure_stretch_blocks(width, height, num_bands, split_complexity, seed=42):
+def generate_extrusion_masterpiece(img_array, num_bands, extrusion_chance, seed=42):
     """
-    Verdeelt het volledige canvas in een strak grid.
-    Ieder blok krijgt een 100% horizontale stretch (slit-scan), geen 'normale' delen.
+    Het ware Repponen algoritme:
+    1. Genereert onzichtbare 'verticale hulplijnen' (guides) voor architecturale structuur.
+    2. Kiest per horizontale band of het een 'Extrusie' wordt of een 'Solid Stretch'.
+    3. Extrusie: Een rechthoekig deel van de foto blijft 100% intact. De zijkanten worden vanaf de randpixels uitgesmeerd.
     """
     rng = np.random.default_rng(seed)
-    blocks = []
+    height, width, _ = img_array.shape
+    output = np.empty_like(img_array)
     
-    # 1. Bepaal horizontale banden (Verdiepingen)
+    # 1. Genereer architecturale 'guides' zodat de blokken mooi uitlijnen als in een gebouw
+    num_guides = rng.integers(4, 15)
+    guides = sorted([rng.integers(0, width) for _ in range(num_guides)])
+    guides = [0] + guides + [width]
+
+    # 2. Bepaal horizontale banden (Verdiepingen)
     y_edges = [0]
     curr_y = 0
     while curr_y < height:
-        step = max(2, int(rng.normal(height / num_bands, (height / num_bands) * 0.5)))
+        # Repponen gebruikt een mix van héle dunne lijnen en dikkere blokken
+        if rng.random() < 0.25:
+            step = rng.integers(1, 5) # Dun
+        else:
+            step = rng.integers(5, max(10, height // (num_bands // 3))) # Dik
+            
         curr_y += step
-        if curr_y >= height - (height // 20): 
+        if curr_y >= height - 2: 
             break
         y_edges.append(curr_y)
     y_edges.append(height)
     
-    # 2. Breek de banden op in verticale blokken
+    band_data = [] # Opgeslagen data voor de MP4 animatie
+    
     for i in range(len(y_edges)-1):
         y1, y2 = y_edges[i], y_edges[i+1]
         
-        x_edges = [0]
-        curr_x = 0
-        while curr_x < width:
-            # Bepaal of deze band verder opgedeeld wordt
-            if rng.random() < split_complexity:
-                step = rng.integers(width // 15, width // 2)
-                curr_x += step
-                if curr_x >= width - (width // 20):
-                    break
-                x_edges.append(curr_x)
-            else:
-                break
-        x_edges.append(width)
-        
-        # 3. Creëer de uiteindelijke stretch-blokken
-        for j in range(len(x_edges)-1):
-            x1, x2 = x_edges[j], x_edges[j+1]
+        if rng.random() < extrusion_chance:
+            # TYPE A: EXTRUSIE (Het object is intact, de randen bloeden uit)
+            idx1 = rng.integers(0, len(guides)-2)
+            idx2 = rng.integers(idx1+1, min(idx1+3, len(guides)))
+            x_start = guides[idx1]
+            x_end = guides[idx2]
             
-            # Kies een willekeurig punt binnen (of vlak buiten) het blok om te samplen
-            sample_x = rng.integers(0, width)
+            if x_end <= x_start: x_end = x_start + 10
             
-            blocks.append({
-                'x1': x1, 'x2': x2, 
-                'y1': y1, 'y2': y2,
-                'base_x': sample_x,
+            # Plaats de intacte foto
+            output[y1:y2, x_start:x_end, :] = img_array[y1:y2, x_start:x_end, :]
+            
+            # Smeer de linkerkant uit (vanaf de linkerrand van het intacte object)
+            if x_start > 0:
+                output[y1:y2, 0:x_start, :] = np.repeat(img_array[y1:y2, x_start:x_start+1, :], x_start, axis=1)
+                
+            # Smeer de rechterkant uit (vanaf de rechterrand van het intacte object)
+            if x_end < width:
+                output[y1:y2, x_end:width, :] = np.repeat(img_array[y1:y2, x_end-1:x_end, :], width - x_end, axis=1)
+                
+            band_data.append({
+                'type': 'extrusion', 'y1': y1, 'y2': y2,
+                'x_start': x_start, 'x_end': x_end,
                 'phase': rng.random() * 2 * math.pi,
-                'speed': rng.uniform(0.1, 1.0) * rng.choice([-1, 1])
+                'speed': rng.uniform(0.05, 0.3) * rng.choice([-1, 1])
             })
             
-    return blocks
+        else:
+            # TYPE B: SOLID STRETCH (Volledig uitgesmeerde band)
+            sample_x = rng.integers(0, width)
+            output[y1:y2, :, :] = np.repeat(img_array[y1:y2, sample_x:sample_x+1, :], width, axis=1)
+            
+            band_data.append({
+                'type': 'solid', 'y1': y1, 'y2': y2,
+                'sample_x': sample_x,
+                'phase': rng.random() * 2 * math.pi,
+                'speed': rng.uniform(0.1, 0.8) * rng.choice([-1, 1])
+            })
+
+    return output, band_data
 
 if uploaded:
     img = Image.open(uploaded).convert("RGB")
@@ -106,35 +130,26 @@ if uploaded:
     # MODUS 1: STATISCHE FOTO
     # =========================================
     if mode == "🖼️ Statisch Kunstwerk":
-        st.subheader("⚙️ Grid Instellingen")
+        st.subheader("⚙️ Extrusie Instellingen")
         
         col1, col2 = st.columns(2)
         with col1:
-            num_bands = st.slider("Aantal Horizontale Banden", 20, 300, 100, help="Dikte van de horizontale strepen.")
+            num_bands = st.slider("Aantal Horizontale Banden", 20, 200, 80, help="De mix tussen hele dunne en dikke lijnen.")
         with col2:
-            split_complexity = st.slider("Verticale Fragmentatie", 0.0, 1.0, 0.75, step=0.05, help="Hoeveel blokken er naast elkaar ontstaan.")
+            extrusion_chance = st.slider("Object Behoud Ratio (%)", 0, 100, 45, help="Hoeveel procent van de banden een intact object toont met rand-extrusie.") / 100.0
             
-        seed_photo = st.number_input("Variatie Seed (voor een andere vlakverdeling)", value=42)
+        seed_photo = st.number_input("Architecturale Variatie (Seed)", value=88)
 
-        if st.button("🖼️ Genereer Volledige Stretch", type="primary"):
+        if st.button("🖼️ Genereer Masterpiece", type="primary"):
             img_array = np.array(img, dtype=np.uint8)
-            height, width, _ = img_array.shape
-            
-            blocks = generate_pure_stretch_blocks(width, height, num_bands, split_complexity, seed_photo)
-            output_array = np.empty_like(img_array)
-            
-            # Pas de stretch toe op elk afzonderlijk blok
-            for b in blocks:
-                sx = np.clip(b['base_x'], 0, width - 1)
-                source_col = img_array[b['y1']:b['y2'], sx:sx+1, :]
-                output_array[b['y1']:b['y2'], b['x1']:b['x2'], :] = np.repeat(source_col, b['x2'] - b['x1'], axis=1)
+            output_array, _ = generate_extrusion_masterpiece(img_array, num_bands, extrusion_chance, seed_photo)
 
             result_img = Image.fromarray(output_array)
-            st.image(result_img, caption="100% Time Stretched", use_container_width=True)
+            st.image(result_img, caption="Anton Repponen Style", use_container_width=True)
 
             buf = io.BytesIO()
-            result_img.save(buf, format="PNG")
-            st.download_button(label="⬇️ Download High-Res PNG", data=buf.getvalue(), file_name="pure_stretch_style.png", mime="image/png")
+            result_img.save(buf, format="PNG", optimize=True)
+            st.download_button(label="⬇️ Download High-Res PNG", data=buf.getvalue(), file_name="repponen_extrusion.png", mime="image/png")
 
     # =========================================
     # MODUS 2: VIDEO (MP4)
@@ -145,14 +160,14 @@ if uploaded:
         col_v1, col_v2 = st.columns(2)
         with col_v1:
             duration = st.selectbox("Duur (seconden)", [5, 10, 15], index=1)
-            num_bands = st.slider("Aantal Horizontale Banden", 20, 300, 100)
+            num_bands = st.slider("Aantal Horizontale Banden", 20, 200, 80)
         with col_v2:
-            split_complexity = st.slider("Verticale Fragmentatie", 0.0, 1.0, 0.75, step=0.05)
-            pan_speed = st.slider("Animatie Snelheid", 0.05, 1.0, 0.2)
+            extrusion_chance = st.slider("Object Behoud Ratio (%)", 0, 100, 45) / 100.0
+            pan_speed = st.slider("X-Ray Scan Snelheid", 0.05, 1.0, 0.2, help="Snelheid waarmee de intacte objecten over de foto schuiven.")
             
-        seed_vid = st.number_input("Variatie Seed", value=42, key="vid_seed")
+        seed_vid = st.number_input("Architecturale Variatie (Seed)", value=88, key="vid_seed")
 
-        if st.button("🎬 Render Volledige Stretch Video", type="primary"):
+        if st.button("🎬 Render Extrusie Animatie", type="primary"):
             target_w, target_h = 1280, 720
             source_ratio = img.width / img.height
             target_ratio = target_w / target_h
@@ -171,7 +186,7 @@ if uploaded:
             fps = 30
             total_frames = duration * fps
             
-            blocks = generate_pure_stretch_blocks(width, height, num_bands, split_complexity, seed_vid)
+            _, band_data = generate_extrusion_masterpiece(img_array, num_bands, extrusion_chance, seed_vid)
             
             progress = st.progress(0)
             output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
@@ -191,13 +206,23 @@ if uploaded:
                 for frame in range(total_frames):
                     t = frame / fps
                     
-                    for b in blocks:
-                        # De sample verschuift soepel heen en weer per blok
-                        offset = int(math.sin(t * pan_speed * b['speed'] + b['phase']) * (width * 0.15))
-                        sx = np.clip(b['base_x'] + offset, 0, width - 1)
-                        
-                        source_col = img_array[b['y1']:b['y2'], sx:sx+1, :]
-                        frame_buffer[b['y1']:b['y2'], b['x1']:b['x2'], :] = np.repeat(source_col, b['x2'] - b['x1'], axis=1)
+                    for b in band_data:
+                        if b['type'] == 'extrusion':
+                            # Beweeg de 'lens' over het object
+                            offset = int(math.sin(t * pan_speed * b['speed'] + b['phase']) * (width * 0.15))
+                            n_start = np.clip(b['x_start'] + offset, 1, width - 2)
+                            n_end = np.clip(b['x_end'] + offset, n_start + 1, width - 1)
+                            
+                            y1, y2 = b['y1'], b['y2']
+                            frame_buffer[y1:y2, n_start:n_end, :] = img_array[y1:y2, n_start:n_end, :]
+                            frame_buffer[y1:y2, 0:n_start, :] = np.repeat(img_array[y1:y2, n_start:n_start+1, :], n_start, axis=1)
+                            frame_buffer[y1:y2, n_end:width, :] = np.repeat(img_array[y1:y2, n_end-1:n_end, :], width - n_end, axis=1)
+                            
+                        else:
+                            # Solid stretch animatie
+                            offset = int(math.sin(t * pan_speed * b['speed'] + b['phase']) * (width * 0.2))
+                            sx = np.clip(b['sample_x'] + offset, 0, width - 1)
+                            frame_buffer[b['y1']:b['y2'], :, :] = np.repeat(img_array[b['y1']:b['y2'], sx:sx+1, :], width, axis=1)
                         
                     process.stdin.write(frame_buffer.tobytes())
                     if frame % 15 == 0:
