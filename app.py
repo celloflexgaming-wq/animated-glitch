@@ -6,7 +6,10 @@ import tempfile
 import os
 import math
 
-st.set_page_config(page_title="Smooth Glitch Video", layout="centered")
+st.set_page_config(
+    page_title="Smooth Glitch Video",
+    layout="centered"
+)
 
 st.title("🎞️ Smooth Glitch Video")
 
@@ -19,9 +22,37 @@ if uploaded:
 
     img = Image.open(uploaded).convert("RGB")
 
-    st.image(img, caption="Originele foto", use_container_width=True)
+    st.image(
+        img,
+        caption="Originele foto",
+        use_container_width=True
+    )
 
-    st.subheader("Instellingen")
+    st.subheader("⚙️ Video-instellingen")
+
+    # -----------------------------------------
+    # RESOLUTIE
+    # -----------------------------------------
+
+    resolution = st.selectbox(
+        "Videoresolutie",
+        [
+            "1920 × 1080 — Full HD",
+            "1280 × 720 — HD"
+        ],
+        index=0
+    )
+
+    if resolution.startswith("1920"):
+        target_width = 1920
+        target_height = 1080
+    else:
+        target_width = 1280
+        target_height = 720
+
+    # -----------------------------------------
+    # DUUR
+    # -----------------------------------------
 
     duration = st.selectbox(
         "Duur",
@@ -29,17 +60,45 @@ if uploaded:
         index=2
     )
 
+    # -----------------------------------------
+    # FPS
+    # -----------------------------------------
+
     fps = st.selectbox(
         "FPS",
         [24, 30, 60],
         index=1
     )
 
-    max_width = st.selectbox(
-        "Maximale breedte",
-        [800, 1280, 1920],
-        index=1
+    # -----------------------------------------
+    # KWALITEIT
+    # -----------------------------------------
+
+    quality = st.selectbox(
+        "Videokwaliteit",
+        [
+            "Maximale kwaliteit",
+            "Zeer hoge kwaliteit",
+            "Hoge kwaliteit"
+        ],
+        index=0
     )
+
+    if quality == "Maximale kwaliteit":
+        crf = 12
+        preset = "slow"
+
+    elif quality == "Zeer hoge kwaliteit":
+        crf = 16
+        preset = "medium"
+
+    else:
+        crf = 20
+        preset = "medium"
+
+    # -----------------------------------------
+    # GLITCH BANDS
+    # -----------------------------------------
 
     bands_count = st.slider(
         "Aantal horizontale glitch-banden",
@@ -48,6 +107,10 @@ if uploaded:
         60
     )
 
+    # -----------------------------------------
+    # SNELHEID
+    # -----------------------------------------
+
     speed = st.slider(
         "Animatiesnelheid",
         1,
@@ -55,32 +118,112 @@ if uploaded:
         3
     )
 
-    if st.button("🎬 Maak video", type="primary"):
+    # -----------------------------------------
+    # START
+    # -----------------------------------------
 
-        # -----------------------------
-        # FOTO VOORBEREIDEN
-        # -----------------------------
+    if st.button(
+        "🎬 Maak Full HD video",
+        type="primary"
+    ):
 
-        if img.width > max_width:
-            new_height = int(img.height * max_width / img.width)
-            img = img.resize(
-                (max_width, new_height),
-                Image.Resampling.LANCZOS
+        # -----------------------------------------
+        # FOTO NAAR 16:9
+        # -----------------------------------------
+
+        source_ratio = img.width / img.height
+        target_ratio = target_width / target_height
+
+        if source_ratio > target_ratio:
+
+            # Foto is te breed → zijkanten croppen
+
+            new_width = int(
+                img.height * target_ratio
             )
 
-        img_array = np.array(img, dtype=np.uint8)
+            left = (
+                img.width - new_width
+            ) // 2
+
+            img = img.crop(
+                (
+                    left,
+                    0,
+                    left + new_width,
+                    img.height
+                )
+            )
+
+        elif source_ratio < target_ratio:
+
+            # Foto is te hoog → boven/onder croppen
+
+            new_height = int(
+                img.width / target_ratio
+            )
+
+            top = (
+                img.height - new_height
+            ) // 2
+
+            img = img.crop(
+                (
+                    0,
+                    top,
+                    img.width,
+                    top + new_height
+                )
+            )
+
+        # -----------------------------------------
+        # UPSCALE NAAR EXACTE RESOLUTIE
+        # -----------------------------------------
+
+        img = img.resize(
+            (
+                target_width,
+                target_height
+            ),
+            Image.Resampling.LANCZOS
+        )
+
+        img_array = np.array(
+            img,
+            dtype=np.uint8
+        )
 
         height, width, channels = img_array.shape
 
-        # -----------------------------
+        # -----------------------------------------
+        # INFO
+        # -----------------------------------------
+
+        total_frames = int(
+            duration * fps
+        )
+
+        st.write(
+            f"**Resolutie:** {width} × {height}"
+        )
+
+        st.write(
+            f"**Frames:** {total_frames}"
+        )
+
+        st.write(
+            f"**Kwaliteit:** CRF {crf} / {preset}"
+        )
+
+        # -----------------------------------------
         # RANDOM GENERATOR
-        # -----------------------------
+        # -----------------------------------------
 
         rng = np.random.default_rng(42)
 
-        # -----------------------------
+        # -----------------------------------------
         # BANDS MAKEN
-        # -----------------------------
+        # -----------------------------------------
 
         band_edges = np.linspace(
             0,
@@ -100,13 +243,17 @@ if uploaded:
             if band_height <= 0:
                 continue
 
-            # Volledige breedte van de band
+            # Volledige band over de hele breedte
             band_row = np.zeros(
-                (band_height, width, 3),
+                (
+                    band_height,
+                    width,
+                    3
+                ),
                 dtype=np.uint8
             )
 
-            # 1 t/m 5 verticale segmenten
+            # 1 t/m 5 segmenten
             num_segments = int(
                 rng.integers(1, 6)
             )
@@ -125,13 +272,19 @@ if uploaded:
                     ).tolist()
                 )
 
-                splits = [0] + split_points + [width]
+                splits = (
+                    [0]
+                    + split_points
+                    + [width]
+                )
 
-            # -----------------------------
-            # IEDER SEGMENT VULLEN
-            # -----------------------------
+            # -----------------------------------------
+            # SEGMENTEN VULLEN
+            # -----------------------------------------
 
-            for j in range(len(splits) - 1):
+            for j in range(
+                len(splits) - 1
+            ):
 
                 x_start = splits[j]
                 x_end = splits[j + 1]
@@ -139,7 +292,7 @@ if uploaded:
                 if x_end <= x_start:
                     continue
 
-                # Willekeurige verticale positie
+                # Willekeurige verticale strook
                 sample_x = int(
                     rng.integers(
                         x_start,
@@ -147,14 +300,13 @@ if uploaded:
                     )
                 )
 
-                # Neem één verticale strook uit de originele foto
                 source = img_array[
                     y_start:y_end,
                     sample_x:sample_x + 1,
                     :
                 ]
 
-                # Rek deze strook horizontaal uit
+                # Horizontaal uitrekken
                 band_row[
                     :,
                     x_start:x_end,
@@ -165,15 +317,14 @@ if uploaded:
                     axis=1
                 )
 
-            # -----------------------------
+            # -----------------------------------------
             # ANIMATIE-INSTELLINGEN
-            # -----------------------------
+            # -----------------------------------------
 
             direction = int(
                 rng.choice([-1, 1])
             )
 
-            # Verschillende bewegingssnelheden
             cycles = int(
                 rng.integers(
                     1,
@@ -181,38 +332,30 @@ if uploaded:
                 )
             )
 
-            # Willekeurige startpositie
             phase = float(
                 rng.random()
             )
 
-            bands.append({
-                "y_start": y_start,
-                "y_end": y_end,
-                "row": band_row,
-                "direction": direction,
-                "cycles": cycles,
-                "phase": phase
-            })
+            bands.append(
+                {
+                    "y_start": y_start,
+                    "y_end": y_end,
+                    "row": band_row,
+                    "direction": direction,
+                    "cycles": cycles,
+                    "phase": phase
+                }
+            )
 
-        # -----------------------------
-        # VIDEO INSTELLINGEN
-        # -----------------------------
-
-        total_frames = int(
-            duration * fps
-        )
-
-        st.write(
-            f"Video: {width} × {height} px — "
-            f"{total_frames} frames"
-        )
+        # -----------------------------------------
+        # PROGRESS BAR
+        # -----------------------------------------
 
         progress = st.progress(0)
 
-        # -----------------------------
-        # TIJDELIJKE OUTPUT
-        # -----------------------------
+        # -----------------------------------------
+        # TIJDELIJK MP4-BESTAND
+        # -----------------------------------------
 
         output_file = tempfile.NamedTemporaryFile(
             delete=False,
@@ -222,9 +365,9 @@ if uploaded:
         output_path = output_file.name
         output_file.close()
 
-        # -----------------------------
-        # FFMPEG STARTEN
-        # -----------------------------
+        # -----------------------------------------
+        # FFMPEG
+        # -----------------------------------------
 
         command = [
             "ffmpeg",
@@ -258,10 +401,10 @@ if uploaded:
             "libx264",
 
             "-preset",
-            "medium",
+            preset,
 
             "-crf",
-            "18",
+            str(crf),
 
             "-pix_fmt",
             "yuv420p",
@@ -278,24 +421,28 @@ if uploaded:
             stderr=subprocess.PIPE
         )
 
-        # -----------------------------
-        # FRAMES MAKEN
-        # -----------------------------
+        # -----------------------------------------
+        # VIDEO RENDEREN
+        # -----------------------------------------
 
         try:
 
-            for frame_number in range(total_frames):
+            for frame_number in range(
+                total_frames
+            ):
 
-                # Tijd van huidige frame
-                t = frame_number / fps
+                # Tijd
+                t = (
+                    frame_number / fps
+                )
 
                 frame = np.zeros_like(
                     img_array
                 )
 
-                # -----------------------------
+                # -----------------------------------------
                 # ALLE BANDS ANIMEREN
-                # -----------------------------
+                # -----------------------------------------
 
                 for band in bands:
 
@@ -304,17 +451,19 @@ if uploaded:
 
                     band_row = band["row"]
 
-                    direction = band["direction"]
-                    cycles = band["cycles"]
-                    phase = band["phase"]
+                    direction = (
+                        band["direction"]
+                    )
 
-                    # --------------------------------
-                    # VLOEIENDE HORIZONTALE BEWEGING
-                    # --------------------------------
-                    #
-                    # De sinus zorgt ervoor dat de band
-                    # soepel heen en weer beweegt.
-                    #
+                    cycles = (
+                        band["cycles"]
+                    )
+
+                    phase = (
+                        band["phase"]
+                    )
+
+                    # Smooth heen-en-weer beweging
                     movement = (
                         0.5
                         + 0.5
@@ -330,7 +479,7 @@ if uploaded:
                         )
                     )
 
-                    # Van -breedte/2 tot +breedte/2
+                    # Beweging over de volledige breedte
                     shift = int(
                         (
                             movement - 0.5
@@ -339,7 +488,6 @@ if uploaded:
                         * direction
                     )
 
-                    # Band over de VOLLEDIGE breedte
                     shifted = np.roll(
                         band_row,
                         shift,
@@ -352,35 +500,45 @@ if uploaded:
                         :
                     ] = shifted
 
-                # -----------------------------
+                # -----------------------------------------
                 # FRAME NAAR FFMPEG
-                # -----------------------------
+                # -----------------------------------------
 
                 process.stdin.write(
                     frame.tobytes()
                 )
 
                 # Progress
-                if frame_number % max(1, fps // 2) == 0:
+                if (
+                    frame_number
+                    % max(1, fps // 2)
+                    == 0
+                ):
 
                     progress.progress(
                         min(
                             1.0,
-                            (frame_number + 1)
+                            (
+                                frame_number + 1
+                            )
                             / total_frames
                         )
                     )
 
             process.stdin.close()
 
-            stderr = process.stderr.read()
+            stderr = (
+                process.stderr.read()
+            )
 
-            return_code = process.wait()
+            return_code = (
+                process.wait()
+            )
 
             if return_code != 0:
 
                 st.error(
-                    "FFmpeg kon de video niet maken:\n\n"
+                    "FFmpeg fout:\n\n"
                     + stderr.decode(
                         "utf-8",
                         errors="replace"
@@ -388,7 +546,7 @@ if uploaded:
                 )
 
                 raise RuntimeError(
-                    "FFmpeg error"
+                    "FFmpeg kon de video niet maken."
                 )
 
         except Exception:
@@ -404,9 +562,9 @@ if uploaded:
 
         progress.progress(1.0)
 
-        # -----------------------------
-        # VIDEO TONEN
-        # -----------------------------
+        # -----------------------------------------
+        # VIDEO INLEZEN
+        # -----------------------------------------
 
         with open(
             output_path,
@@ -415,8 +573,12 @@ if uploaded:
 
             video_bytes = f.read()
 
+        # -----------------------------------------
+        # RESULTAAT
+        # -----------------------------------------
+
         st.success(
-            "✅ Video klaar!"
+            "✅ Full HD video klaar!"
         )
 
         st.video(
@@ -424,13 +586,16 @@ if uploaded:
         )
 
         st.download_button(
-            label="⬇️ Download MP4",
+            label="⬇️ Download MP4 in maximale kwaliteit",
             data=video_bytes,
-            file_name="smooth_glitch.mp4",
+            file_name="smooth_glitch_full_hd.mp4",
             mime="video/mp4"
         )
 
-        # Tijdelijk bestand verwijderen
+        # -----------------------------------------
+        # OPSCHONEN
+        # -----------------------------------------
+
         try:
             os.remove(output_path)
         except:
