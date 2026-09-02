@@ -12,6 +12,30 @@ st.set_page_config(
     layout="centered"
 )
 
+# --- MOBIELE UI OPTIMALISATIE (CSS) ---
+st.markdown("""
+    <style>
+    /* Zorg dat knoppen en download-opties op mobiel altijd mooi over de volle breedte vallen */
+    .stButton > button, .stDownloadButton > button {
+        width: 100%;
+        border-radius: 8px;
+        font-weight: bold;
+        height: 3em;
+    }
+    /* Maak de uploader vriendelijker voor touch-schermen */
+    .stFileUploader {
+        padding: 10px;
+    }
+    /* Zorg dat marges op mobiel netjes meebewegen */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("🎞️ Smooth Glitch Studio")
 
 uploaded = st.file_uploader(
@@ -44,7 +68,7 @@ if uploaded:
     # MODUS 1: STATISCHE GLITCH FOTO
     # =========================================
     if mode == "🖼️ Glitch Foto (Statisch)":
-        st.subheader("⚙️ Foto-instellingen (Standaard)")
+        st.subheader("⚙️ Foto-instellingen")
 
         resolution_photo = st.selectbox(
             "Foto resolutie",
@@ -56,7 +80,6 @@ if uploaded:
             index=0
         )
 
-        # Standaard ingesteld op 80 (reset altijd bij herladen)
         bands_count_photo = st.slider(
             "Aantal glitch-banden (bepaalt streepdikte)",
             20,
@@ -65,7 +88,6 @@ if uploaded:
             key="photo_bands"
         )
         
-        # Extra optie: Segment variatie voor foto
         segment_complexity_photo = st.slider(
             "Glitch complexiteit (Aantal splitsingen per streep)",
             1,
@@ -164,9 +186,8 @@ if uploaded:
     # MODUS 2: GLITCH VIDEO (MP4)
     # =========================================
     elif mode == "🎥 Glitch Video (MP4)":
-        st.subheader("⚙️ Video-instellingen (Standaard)")
+        st.subheader("⚙️ Video-instellingen")
 
-        # RESOLUTIE (Standaard Full HD -> index=0)
         resolution = st.selectbox(
             "Videoresolutie",
             [
@@ -183,21 +204,18 @@ if uploaded:
             target_width = 1280
             target_height = 720
 
-        # DUUR (Standaard 15 sec -> index=2)
         duration = st.selectbox(
             "Duur",
             [5, 10, 15],
             index=2
         )
 
-        # FPS (Standaard 30 -> index=1)
         fps = st.selectbox(
             "FPS",
             [24, 30, 60],
             index=1
         )
 
-        # KWALITEIT (Standaard Maximale kwaliteit -> index=0)
         quality = st.selectbox(
             "Videokwaliteit",
             [
@@ -218,7 +236,6 @@ if uploaded:
             crf = 20
             preset = "medium"
 
-        # GLITCH BANDS / STREEPDIKTE (Standaard op 60)
         bands_count = st.slider(
             "Aantal horizontale glitch-banden (bepaalt streepdikte)",
             20,
@@ -226,7 +243,6 @@ if uploaded:
             60
         )
 
-        # EXTRA OPTIE: COMPLEXITEIT / BLOKKEN PER STREEP
         segment_complexity_video = st.slider(
             "Glitch complexiteit (Aantal segmenten per band)",
             1,
@@ -234,7 +250,6 @@ if uploaded:
             3
         )
 
-        # SNELHEID (Standaard op 3)
         speed = st.slider(
             "Animatiesnelheid",
             1,
@@ -242,7 +257,6 @@ if uploaded:
             3
         )
 
-        # START VIDEO RENDER
         if st.button(
             "🎬 Maak Full HD video",
             type="primary"
