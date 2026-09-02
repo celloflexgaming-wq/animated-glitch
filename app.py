@@ -15,18 +15,15 @@ st.set_page_config(
 # --- MOBIELE UI OPTIMALISATIE (CSS) ---
 st.markdown("""
     <style>
-    /* Zorg dat knoppen en download-opties op mobiel altijd mooi over de volle breedte vallen */
     .stButton > button, .stDownloadButton > button {
         width: 100%;
         border-radius: 8px;
         font-weight: bold;
         height: 3em;
     }
-    /* Maak de uploader vriendelijker voor touch-schermen */
     .stFileUploader {
         padding: 10px;
     }
-    /* Zorg dat marges op mobiel netjes meebewegen */
     .block-container {
         padding-top: 2rem;
         padding-bottom: 2rem;
@@ -44,7 +41,6 @@ uploaded = st.file_uploader(
 )
 
 if uploaded:
-
     img = Image.open(uploaded).convert("RGB")
 
     st.image(
@@ -53,9 +49,6 @@ if uploaded:
         use_container_width=True
     )
 
-    # -----------------------------------------
-    # MODUS SELECTIE
-    # -----------------------------------------
     st.markdown("---")
     mode = st.radio(
         "Kies wat je wilt genereren:",
@@ -96,10 +89,7 @@ if uploaded:
             key="photo_complexity"
         )
 
-        if st.button(
-            "🖼️ Genereer Glitch Foto",
-            type="primary"
-        ):
+        if st.button("🖼️ Genereer Glitch Foto", type="primary"):
             if "1920" in resolution_photo:
                 target_w, target_h = 1920, 1080
             elif "1280" in resolution_photo:
@@ -257,11 +247,7 @@ if uploaded:
             3
         )
 
-        if st.button(
-            "🎬 Maak Full HD video",
-            type="primary"
-        ):
-
+        if st.button("🎬 Maak Full HD video", type="primary"):
             source_ratio = img.width / img.height
             target_ratio = target_width / target_height
 
@@ -279,13 +265,8 @@ if uploaded:
                 Image.Resampling.LANCZOS
             )
 
-            img_array = np.array(
-                img,
-                dtype=np.uint8
-            )
-
+            img_array = np.array(img, dtype=np.uint8)
             height, width, channels = img_array.shape
-
             total_frames = int(duration * fps)
 
             st.write(f"**Resolutie:** {width} × {height}")
@@ -293,36 +274,19 @@ if uploaded:
             st.write(f"**Kwaliteit:** CRF {crf} / {preset}")
 
             rng = np.random.default_rng(42)
-
-            band_edges = np.linspace(
-                0,
-                height,
-                bands_count + 1
-            ).astype(int)
-
+            band_edges = np.linspace(0, height, bands_count + 1).astype(int)
             bands = []
 
             for i in range(bands_count):
                 y_start = band_edges[i]
                 y_end = band_edges[i + 1]
-
                 band_height = y_end - y_start
 
                 if band_height <= 0:
                     continue
 
-                band_row = np.zeros(
-                    (
-                        band_height,
-                        width,
-                        3
-                    ),
-                    dtype=np.uint8
-                )
-
-                num_segments = int(
-                    rng.integers(1, segment_complexity_video + 1)
-                )
+                band_row = np.zeros((band_height, width, 3), dtype=np.uint8)
+                num_segments = int(rng.integers(1, segment_complexity_video + 1))
 
                 if num_segments == 1:
                     splits = [0, width]
@@ -334,109 +298,58 @@ if uploaded:
                             replace=False
                         ).tolist()
                     )
+                    splits = [0] + split_points + [width]
 
-                    splits = (
-                        [0]
-                        + split_points
-                        + [width]
-                    )
-
-                for j in range(
-                    len(splits) - 1
-                ):
+                for j in range(len(splits) - 1):
                     x_start = splits[j]
                     x_end = splits[j + 1]
 
                     if x_end <= x_start:
                         continue
 
-                    sample_x = int(
-                        rng.integers(
-                            x_start,
-                            x_end
-                        )
-                    )
+                    sample_x = int(rng.integers(x_start, x_end))
+                    source = img_array[y_start:y_end, sample_x:sample_x + 1, :]
 
-                    source = img_array[
-                        y_start:y_end,
-                        sample_x:sample_x + 1,
-                        :
-                    ]
-
-                    band_row[
-                        :,
-                        x_start:x_end,
-                        :
-                    ] = np.repeat(
+                    band_row[:, x_start:x_end, :] = np.repeat(
                         source,
                         x_end - x_start,
                         axis=1
                     )
 
-                direction = int(
-                    rng.choice([-1, 1])
-                )
+                direction = int(rng.choice([-1, 1]))
+                cycles = int(rng.integers(1, speed + 1))
+                phase = float(rng.random())
 
-                cycles = int(
-                    rng.integers(
-                        1,
-                        speed + 1
-                    )
-                )
-
-                phase = float(
-                    rng.random()
-                )
-
-                bands.append(
-                    {
-                        "y_start": y_start,
-                        "y_end": y_end,
-                        "row": band_row,
-                        "direction": direction,
-                        "cycles": cycles,
-                        "phase": phase
-                    }
-                )
+                bands.append({
+                    "y_start": y_start,
+                    "y_end": y_end,
+                    "row": band_row,
+                    "direction": direction,
+                    "cycles": cycles,
+                    "phase": phase
+                })
 
             progress = st.progress(0)
-
-            output_file = tempfile.NamedTemporaryFile(
-                delete=False,
-                suffix=".mp4"
-            )
-
+            output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
             output_path = output_file.name
             output_file.close()
 
             command = [
                 "ffmpeg",
                 "-y",
-                "-loglevel",
-                "error",
-                "-f",
-                "rawvideo",
-                "-vcodec",
-                "rawvideo",
-                "-pix_fmt",
-                "rgb24",
-                "-s",
-                f"{width}x{height}",
-                "-r",
-                str(fps),
-                "-i",
-                "-",
+                "-loglevel", "error",
+                "-f", "rawvideo",
+                "-vcodec", "rawvideo",
+                "-pix_fmt", "rgb24",
+                "-s", f"{width}x{height}",
+                "-r", str(fps),
+                "-i", "-",
                 "-an",
-                "-c:v",
-                "libx264",
-                "-preset",
-                preset,
-                "-crf",
-                str(crf),
-                "-pix_fmt",
-                "yuv420p",
-                "-movflags",
-                "+faststart",
+                "-c:v", "libx264",
+                "-preset", preset,
+                "-crf", str(crf),
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
                 output_path
             ]
 
@@ -447,129 +360,51 @@ if uploaded:
             )
 
             try:
-                for frame_number in range(
-                    total_frames
-                ):
-                    t = (
-                        frame_number / fps
-                    )
-
-                    frame = np.zeros_like(
-                        img_array
-                    )
+                for frame_number in range(total_frames):
+                    t = frame_number / fps
+                    frame = np.zeros_like(img_array)
 
                     for band in bands:
                         y1 = band["y_start"]
                         y2 = band["y_end"]
-
                         band_row = band["row"]
                         direction = band["direction"]
                         cycles = band["cycles"]
                         phase = band["phase"]
 
-                        movement = (
-                            0.5
-                            + 0.5
-                            * math.sin(
-                                2
-                                * math.pi
-                                * (
-                                    cycles
-                                    * t
-                                    / duration
-                                    + phase
-                                )
-                            )
-                        )
+                        movement = 0.5 + 0.5 * math.sin(2 * math.pi * (cycles * t / duration + phase))
+                        shift = int((movement - 0.5) * width * direction)
+                        shifted = np.roll(band_row, shift, axis=1)
+                        frame[y1:y2, :, :] = shifted
 
-                        shift = int(
-                            (
-                                movement - 0.5
-                            )
-                            * width
-                            * direction
-                        )
+                    process.stdin.write(frame.tobytes())
 
-                        shifted = np.roll(
-                            band_row,
-                            shift,
-                            axis=1
-                        )
-
-                        frame[
-                            y1:y2,
-                            :,
-                            :
-                        ] = shifted
-
-                    process.stdin.write(
-                        frame.tobytes()
-                    )
-
-                    if (
-                        frame_number
-                        % max(1, fps // 2)
-                        == 0
-                    ):
-                        progress.progress(
-                            min(
-                                1.0,
-                                (
-                                    frame_number + 1
-                                )
-                                / total_frames
-                            )
-                        )
+                    if frame_number % max(1, fps // 2) == 0:
+                        progress.progress(min(1.0, (frame_number + 1) / total_frames))
 
                 process.stdin.close()
-
-                stderr = (
-                    process.stderr.read()
-                )
-
-                return_code = (
-                    process.wait()
-                )
+                stderr = process.stderr.read()
+                return_code = process.wait()
 
                 if return_code != 0:
-                    st.error(
-                        "FFmpeg fout:\n\n"
-                        + stderr.decode(
-                            "utf-8",
-                            errors="replace"
-                        )
-                    )
-
-                    raise RuntimeError(
-                        "FFmpeg kon de video niet maken."
-                    )
+                    st.error("FFmpeg fout:\n\n" + stderr.decode("utf-8", errors="replace"))
+                    raise RuntimeError("FFmpeg kon de video niet maken.")
 
             except Exception:
                 try:
                     process.stdin.close()
                 except:
                     pass
-
                 process.kill()
-
                 raise
 
             progress.progress(1.0)
 
-            with open(
-                output_path,
-                "rb"
-            ) as f:
+            with open(output_path, "rb") as f:
                 video_bytes = f.read()
 
-            st.success(
-                "✅ Full HD video klaar!"
-            )
-
-            st.video(
-                video_bytes
-            )
-
+            st.success("✅ Full HD video klaar!")
+            st.video(video_bytes)
             st.download_button(
                 label="⬇️ Download MP4 in maximale kwaliteit",
                 data=video_bytes,
