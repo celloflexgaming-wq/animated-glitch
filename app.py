@@ -93,7 +93,6 @@ if uploaded:
     
     # --- INSPECTOR PANEEL ---
     with col_controls:
-        # TABS VOOR OVERZICHTELIJKHEID
         tab_design, tab_motion, tab_render = st.tabs(["🎨 Vormgeving", "🎞️ Motion", "⚙️ Export"])
         
         with tab_design:
@@ -132,12 +131,20 @@ if uploaded:
         if render_btn:
             with st.spinner("Bezig met renderen... Dit kan even duren bij video's tot 60 seconden."):
                 target_img = img
+                
+                # --- BEELDBEWERKING & EVEN-PIXEL FIX ---
                 if resolutie != "Origineel":
                     tw, th = (1920, 1080) if "1920" in resolutie else (1280, 720)
                     sr, tr = img.width / img.height, tw / th
                     if sr > tr: target_img = img.crop(((img.width - int(img.height * tr))//2, 0, (img.width + int(img.height * tr))//2, img.height))
                     else: target_img = img.crop((0, (img.height - int(img.width / tr))//2, img.width, (img.height + int(img.width / tr))//2))
                     target_img = target_img.resize((tw, th), Image.Resampling.LANCZOS)
+                else:
+                    # FIX: Zorg dat originele resoluties altijd even getallen zijn voor FFmpeg H.264 compressie
+                    new_w = img.width - (img.width % 2)
+                    new_h = img.height - (img.height % 2)
+                    if new_w != img.width or new_h != img.height:
+                        target_img = target_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
                     
                 img_arr = np.array(target_img, dtype=np.uint8)
                 h, w, _ = img_arr.shape
