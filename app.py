@@ -9,10 +9,11 @@ import io
 import gc
 
 st.set_page_config(
-    page_title="Repponen True Slit-Scan Studio",
+    page_title="100% Grid Slit-Scan Studio",
     layout="centered"
 )
 
+# --- UI OPTIMALISATIE ---
 st.markdown("""
     <style>
     .stButton > button, .stDownloadButton > button {
@@ -31,132 +32,134 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🏙️ True Time-Stretch Studio")
-st.markdown("*De authentieke Anton Repponen methode: Intacte focus-objecten met rand-extrusie.*")
+st.title("🧱 100% Grid Slit-Scan Studio")
+st.markdown("*Volledige dekking: De hele afbeelding opgedeeld in een abstract raster van glitch-blokken.*")
 
 uploaded = st.file_uploader("Upload een foto", type=["jpg", "jpeg", "png", "webp"])
 
-def generate_true_repponen(img_array, num_bands, num_objects, min_size, max_size, seed=42):
+def generate_full_grid_blocks(width, height, num_cols, base_rows, chaos_factor, brightness_var, seed=42):
+    """
+    Verdeelt 100% van het canvas in asymmetrische blokken.
+    Elk blok krijgt een slit-scan stretch en een subtiele belichtingsvariatie voor diepte.
+    """
     rng = np.random.default_rng(seed)
-    height, width, _ = img_array.shape
+    blocks = []
     
-    # 1. Genereer maskers (de intacte objecten zoals borden, gebouwen, pilaren)
-    objects = []
-    for _ in range(num_objects):
-        # Variatie in objecten: pilaren (smal/hoog) vs gebouwen (breed)
-        if rng.random() > 0.5:
-            w = rng.integers(int(width * (min_size/2)), max(2, int(width * (max_size/3))))
-            h = rng.integers(int(height * min_size), max(2, int(height * max_size)))
-        else:
-            w = rng.integers(int(width * min_size), max(2, int(width * max_size)))
-            h = rng.integers(int(height * (min_size/2)), max(2, int(height * (max_size/3))))
-            
-        x = rng.integers(0, max(1, width - w))
-        y = rng.integers(0, max(1, height - h))
-        objects.append((x, y, w, h))
-        
-    # 2. Genereer horizontale banden (strepen)
-    y_edges = [0]
-    curr_y = 0
-    while curr_y < height:
-        step = rng.integers(2, max(4, height // (num_bands // 2)))
-        curr_y += step
-        if curr_y >= height - 2: 
+    # 1. Verticale kolommen (pilaren)
+    col_edges = [0]
+    curr_x = 0
+    while curr_x < width:
+        variance = (width / num_cols) * chaos_factor
+        step = max(5, int(rng.normal(width / num_cols, variance)))
+        curr_x += step
+        if curr_x >= width - 5: 
             break
-        y_edges.append(curr_y)
-    y_edges.append(height)
+        col_edges.append(curr_x)
+    col_edges.append(width)
     
-    output = np.zeros_like(img_array)
-    band_data = [] # Voor animatie
-    
-    # 3. Vul elke horizontale band in
-    for i in range(len(y_edges)-1):
-        y1, y2 = y_edges[i], y_edges[i+1]
+    # 2. Horizontale rijen per kolom
+    for i in range(len(col_edges)-1):
+        x1, x2 = col_edges[i], col_edges[i+1]
         
-        intersecting = []
-        for (ox, oy, ow, oh) in objects:
-            if oy < y2 and (oy + oh) > y1:
-                intersecting.append((ox, ox + ow))
-                
-        if not intersecting:
-            sample_x = rng.integers(0, width)
-            output[y1:y2, :, :] = np.repeat(img_array[y1:y2, sample_x:sample_x+1, :], width, axis=1)
-            band_data.append({'type': 'bg', 'y1': y1, 'y2': y2, 'sample_x': sample_x, 
-                              'phase': rng.random()*2*math.pi, 'speed': rng.uniform(0.1, 0.5)*rng.choice([-1,1])})
-        else:
-            intersecting.sort()
-            merged = []
-            for obj in intersecting:
-                if not merged:
-                    merged.append(obj)
-                else:
-                    last = merged[-1]
-                    if obj[0] <= last[1]:
-                        merged[-1] = (last[0], max(last[1], obj[1]))
-                    else:
-                        merged.append(obj)
-                        
-            curr_x = 0
-            obj_meta = []
-            for (ox1, ox2) in merged:
-                if ox1 > curr_x:
-                    output[y1:y2, curr_x:ox1, :] = np.repeat(img_array[y1:y2, ox1:ox1+1, :], ox1 - curr_x, axis=1)
-                output[y1:y2, ox1:ox2, :] = img_array[y1:y2, ox1:ox2, :]
-                curr_x = ox2
-                obj_meta.append((ox1, ox2))
-                
-            if curr_x < width:
-                output[y1:y2, curr_x:width, :] = np.repeat(img_array[y1:y2, curr_x-1:curr_x, :], width - curr_x, axis=1)
-                
-            band_data.append({'type': 'fg', 'y1': y1, 'y2': y2, 'objs': obj_meta,
-                              'phase': rng.random()*2*math.pi, 'speed': rng.uniform(0.05, 0.3)*rng.choice([-1,1])})
-                              
-    return output, band_data
+        row_edges = [0]
+        curr_y = 0
+        target_rows = max(2, int(base_rows * rng.uniform(1.0 - chaos_factor, 1.0 + chaos_factor)))
+        
+        while curr_y < height:
+            variance_y = (height / target_rows) * chaos_factor
+            step = max(2, int(rng.normal(height / target_rows, variance_y)))
+            curr_y += step
+            if curr_y >= height - 2: 
+                break
+            row_edges.append(curr_y)
+        row_edges.append(height)
+        
+        # 3. Genereer de blok-eigenschappen
+        for j in range(len(row_edges)-1):
+            y1, y2 = row_edges[j], row_edges[j+1]
+            
+            sample_x = rng.integers(x1, x2)
+            
+            # Subtiel contrast tussen de blokjes voor de 'mozaïek' look
+            brightness = 1.0
+            if brightness_var > 0:
+                brightness = rng.uniform(1.0 - brightness_var, 1.0 + brightness_var)
+            
+            blocks.append({
+                'x1': x1, 'x2': x2, 
+                'y1': y1, 'y2': y2,
+                'sample_x': sample_x,
+                'brightness': brightness,
+                'phase': rng.random() * 2 * math.pi,
+                'speed': rng.uniform(0.1, 1.0) * rng.choice([-1, 1])
+            })
+            
+    return blocks
 
 if uploaded:
     img = Image.open(uploaded).convert("RGB")
     st.image(img, caption="Originele foto", use_container_width=True)
     st.markdown("---")
     
-    mode = st.radio("Output Formaat:", ["🖼️ Statisch Kunstwerk", "🎥 Geanimeerde Loop (MP4)"], horizontal=True)
+    mode = st.radio("Output Formaat:", ["🖼️ Statisch Grid", "🎥 Geanimeerde Loop (MP4)"], horizontal=True)
     st.markdown("---")
 
-    if mode == "🖼️ Statisch Kunstwerk":
-        st.subheader("⚙️ Masker & Extrusie Instellingen")
+    # =========================================
+    # MODUS 1: STATISCHE FOTO
+    # =========================================
+    if mode == "🖼️ Statisch Grid":
+        st.subheader("⚙️ Grid & Glitch Instellingen")
         col1, col2 = st.columns(2)
         with col1:
-            num_bands = st.slider("Aantal Achtergrond Strepen", 50, 300, 150)
-            num_objects = st.slider("Aantal Intacte Objecten", 1, 30, 8, help="Hoeveel gebouwen of borden blijven staan.")
+            num_cols = st.slider("Aantal Verticale Kolommen", 2, 150, 40, help="Bepaal de breedte van je rasterblokken.")
+            base_rows = st.slider("Aantal Rijen per Kolom", 10, 300, 100, help="Hoeveel horizontale strepen er in een kolom passen.")
+            chaos_factor = st.slider("Asymmetrie (Chaos)", 0.0, 0.8, 0.35, step=0.05, help="Maakt de blokjes willekeuriger van formaat.")
         with col2:
-            min_size = st.slider("Minimale Object Grootte (%)", 1, 20, 5) / 100.0
-            max_size = st.slider("Maximale Object Grootte (%)", 10, 80, 35) / 100.0
-            seed_photo = st.number_input("Architecturale Variatie (Seed)", value=42)
+            brightness_var = st.slider("Blok Contrast (Diepte)", 0.0, 0.5, 0.15, step=0.05, help="Maakt blokken iets lichter of donkerder om ze los van elkaar te trekken.")
+            seed_photo = st.number_input("Architecturale Variatie (Seed)", value=99)
 
-        if st.button("🖼️ Genereer Masterpiece", type="primary"):
+        if st.button("🖼️ Genereer 100% Stretch", type="primary"):
             img_array = np.array(img, dtype=np.uint8)
-            output_array, _ = generate_true_repponen(img_array, num_bands, num_objects, min_size, max_size, seed_photo)
+            height, width, _ = img_array.shape
             
+            blocks = generate_full_grid_blocks(width, height, num_cols, base_rows, chaos_factor, brightness_var, seed_photo)
+            output_array = np.empty_like(img_array)
+            
+            for b in blocks:
+                # 100% Slit-Scan: Rek de pixel uit over de hele breedte van dit blok
+                sx = np.clip(b['sample_x'], b['x1'], b['x2'] - 1)
+                source_col = img_array[b['y1']:b['y2'], sx:sx+1, :]
+                stretched = np.repeat(source_col, b['x2'] - b['x1'], axis=1)
+                
+                if b['brightness'] != 1.0:
+                    stretched = np.clip(stretched * b['brightness'], 0, 255).astype(np.uint8)
+                
+                output_array[b['y1']:b['y2'], b['x1']:b['x2'], :] = stretched
+
             result_img = Image.fromarray(output_array)
-            st.image(result_img, caption="True Time-Stretched", use_container_width=True)
-            
+            st.image(result_img, caption="100% Grid Slit-Scan", use_container_width=True)
+
             buf = io.BytesIO()
             result_img.save(buf, format="PNG", optimize=True)
-            st.download_button(label="⬇️ Download High-Res PNG", data=buf.getvalue(), file_name="true_repponen.png", mime="image/png")
+            st.download_button(label="⬇️ Download High-Res PNG", data=buf.getvalue(), file_name="full_grid_stretch.png", mime="image/png")
 
+    # =========================================
+    # MODUS 2: VIDEO (MP4)
+    # =========================================
     elif mode == "🎥 Geanimeerde Loop (MP4)":
         st.subheader("⚙️ Animatie Instellingen")
         col_v1, col_v2 = st.columns(2)
         with col_v1:
             duration = st.selectbox("Duur (seconden)", [5, 10, 15], index=1)
-            num_bands = st.slider("Aantal Achtergrond Strepen", 50, 300, 150)
-            num_objects = st.slider("Aantal Intacte Objecten", 1, 30, 8)
+            num_cols = st.slider("Aantal Verticale Kolommen", 2, 150, 40)
+            base_rows = st.slider("Aantal Rijen per Kolom", 10, 300, 100)
         with col_v2:
-            pan_speed = st.slider("Animatie Snelheid", 0.05, 1.0, 0.2)
-            min_size = st.slider("Minimale Object Grootte (%)", 1, 20, 5) / 100.0
-            max_size = st.slider("Maximale Object Grootte (%)", 10, 80, 35) / 100.0
-            seed_vid = st.number_input("Architecturale Variatie (Seed)", value=42, key="vid_seed")
+            chaos_factor = st.slider("Asymmetrie (Chaos)", 0.0, 0.8, 0.35, step=0.05)
+            brightness_var = st.slider("Blok Contrast (Diepte)", 0.0, 0.5, 0.15, step=0.05)
+            pan_speed = st.slider("Animatie Snelheid", 0.05, 2.0, 0.3)
+            seed_vid = st.number_input("Architecturale Variatie (Seed)", value=99, key="vid_seed")
 
-        if st.button("🎬 Render Extrusie Animatie", type="primary"):
+        if st.button("🎬 Render Grid Animatie", type="primary"):
             target_w, target_h = 1280, 720
             source_ratio = img.width / img.height
             target_ratio = target_w / target_h
@@ -175,7 +178,7 @@ if uploaded:
             fps = 30
             total_frames = duration * fps
             
-            _, band_data = generate_true_repponen(img_array, num_bands, num_objects, min_size, max_size, seed_vid)
+            blocks = generate_full_grid_blocks(width, height, num_cols, base_rows, chaos_factor, brightness_var, seed_vid)
             
             progress = st.progress(0)
             output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
@@ -195,27 +198,20 @@ if uploaded:
                 for frame in range(total_frames):
                     t = frame / fps
                     
-                    for b in band_data:
-                        if b['type'] == 'bg':
-                            offset = int(math.sin(t * pan_speed * b['speed'] + b['phase']) * (width * 0.2))
-                            sx = np.clip(b['sample_x'] + offset, 0, width - 1)
-                            frame_buffer[b['y1']:b['y2'], :, :] = np.repeat(img_array[b['y1']:b['y2'], sx:sx+1, :], width, axis=1)
-                        else:
-                            y1, y2 = b['y1'], b['y2']
-                            curr_x = 0
-                            for (ox1, ox2) in b['objs']:
-                                offset = int(math.sin(t * pan_speed * b['speed'] + b['phase']) * (width * 0.05))
-                                n_ox1 = np.clip(ox1 + offset, 1, width - 2)
-                                n_ox2 = np.clip(ox2 + offset, n_ox1 + 1, width - 1)
-                                
-                                if n_ox1 > curr_x:
-                                    frame_buffer[y1:y2, curr_x:n_ox1, :] = np.repeat(img_array[y1:y2, n_ox1:n_ox1+1, :], n_ox1 - curr_x, axis=1)
-                                frame_buffer[y1:y2, n_ox1:n_ox2, :] = img_array[y1:y2, n_ox1:n_ox2, :]
-                                curr_x = n_ox2
-                                
-                            if curr_x < width:
-                                frame_buffer[y1:y2, curr_x:width, :] = np.repeat(img_array[y1:y2, curr_x-1:curr_x, :], width - curr_x, axis=1)
-                                
+                    for b in blocks:
+                        block_width = b['x2'] - b['x1']
+                        # Animatie: Het sample punt schuift zachtjes heen en weer binnen het blok
+                        offset = int(math.sin(t * pan_speed * b['speed'] + b['phase']) * (block_width / 2.5))
+                        sx = np.clip(b['sample_x'] + offset, b['x1'], b['x2'] - 1)
+                        
+                        source_col = img_array[b['y1']:b['y2'], sx:sx+1, :]
+                        stretched = np.repeat(source_col, block_width, axis=1)
+                        
+                        if b['brightness'] != 1.0:
+                            stretched = np.clip(stretched * b['brightness'], 0, 255).astype(np.uint8)
+                        
+                        frame_buffer[b['y1']:b['y2'], b['x1']:b['x2'], :] = stretched
+                        
                     process.stdin.write(frame_buffer.tobytes())
                     if frame % 15 == 0:
                         progress.progress(min(1.0, (frame + 1) / total_frames))
@@ -231,4 +227,3 @@ if uploaded:
             with open(output_path, "rb") as f:
                 st.video(f.read())
             st.success("✅ Render Voltooid!")
-
