@@ -1,6 +1,6 @@
 import streamlit as st
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFile
 import subprocess
 import tempfile
 import os
@@ -8,7 +8,7 @@ import math
 import io
 import shutil
 import gc
-
+import time
 
 # ============================================================
 # 1. STREAMLIT CONFIG
@@ -17,41 +17,48 @@ import gc
 st.set_page_config(
     page_title="Ultimate Motion Glitch Studio",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-st.markdown("""
-<style>
-.stButton > button {
-    width: 100%;
-    border-radius: 6px;
-    font-weight: bold;
-    height: 3em;
-    transition: 0.2s;
-}
-
-.stButton > button:hover {
-    transform: scale(1.02);
-}
-
-.block-container {
-    padding-top: 2rem;
-    padding-bottom: 2rem;
-}
-</style>
-""", unsafe_allow_html=True)
-
+st.markdown(
+    """
+    <style>
+    .stButton > button {
+        width: 100%;
+        border-radius: 6px;
+        font-weight: bold;
+        height: 3em;
+    }
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ============================================================
-# 2. VEILIGHEID / LIMITS
+# 2. VEILIGE LIMITS
 # ============================================================
+#
+# Belangrijk:
+# De vorige versie kon veel tijdelijke NumPy-arrays tegelijk
+# in RAM hebben. Deze versie houdt resolutie, frames en
+# uploadgrootte bewust begrensd.
+#
 
-# Voorkomt dat extreem grote afbeeldingen het geheugen slopen.
-MAX_INPUT_PIXELS = 20_000_000
+MAX_UPLOAD_MB = 30
+MAX_INPUT_PIXELS = 16_000_000
+MAX_INPUT_DIMENSION = 4096
 
-# Maximale afmeting voor "Origineel".
-MAX_ORIGINAL_DIMENSION = 4096
+# Video mag nooit 4K/4096 verwerken.
+MAX_VIDEO_WIDTH = 1920
+MAX_VIDEO_HEIGHT = 1080
 
+MAX_VIDEO_DURATION = 30
+MAX_VIDEO_FPS = 30
+MAX_VIDEO_FRAMES = MAX_VIDEO_DURATION * MAX_VIDEO_FPS
 
 # ============================================================
 # 3. HELPERS
@@ -65,7 +72,6 @@ def safe_int(value, default=0):
 
 
 def cleanup_file(path):
-    """Verwijder tijdelijk bestand zonder ooit een crash te veroorzaken."""
     if path and os.path.exists(path):
         try:
             os.remove(path)
@@ -73,198 +79,201 @@ def cleanup_file(path):
             pass
 
 
+def cleanup_paths(paths):
+    for path in paths:
+        cleanup_file(path)
+
+
 def check_ffmpeg():
-    """Controleer of FFmpeg beschikbaar is."""
     return shutil.which("ffmpeg") is not None
 
 
-def load_image_safely(uploaded_file):
-    """
-    Laadt een afbeelding veilig en voorkomt extreem
-    geheugenverbruik.
-    """
+def get_ffmpeg_version():
+    if not check_ffmpeg():
+        return None
 
     try:
-        image = Image.open(uploaded_file)
+        result = subprocess.run(
+            ["ffmpeg", "-version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=5,
+        )
+        return result.stdout.splitlines()[0] if result.stdout else "FFmpeg gevonden"
+    except Exception:
+        return "FFmpeg gevonden"
 
-        # Forceer daadwerkelijke decode voordat we verder gaan.
+
+def image_from_uploaded_file(uploaded_file):
+    """
+    Laadt de upload veilig in RGB.
+    De afbeelding wordt direct verkleind als hij te groot is.
+    """
+    try:
+        file_size_mb = uploaded_file.size / (1024 * 1024)
+
+        if file_size_mb > MAX_UPLOAD_MB:
+            st.error(
+                f"❌ Bestand is te groot ({file_size_mb:.1f} MB). "
+                f"Maximum: {MAX_UPLOAD_MB} MB."
+            )
+            return None
+
+        uploaded_file.seek(0)
+
+        # voorkom onnodige Pillow-cache/decoder-problemen
+        ImageFile.LOAD_TRUNCATED_IMAGES = False
+
+        image = Image.open(uploaded_file)
         image.load()
 
         image = image.convert("RGB")
 
         pixels = image.width * image.height
 
-        # Te grote afbeelding automatisch verkleinen.
         if pixels > MAX_INPUT_PIXELS:
+            scale = math.sqrt(MAX_INPUT_PIXELS / pixels)
 
-            scale = math.sqrt(
-                MAX_INPUT_PIXELS / pixels
-            )
-
-            new_width = max(
-                2,
-                int(image.width * scale)
-            )
-
-            new_height = max(
-                2,
-                int(image.height * scale)
-            )
+            new_width = max(2, int(image.width * scale))
+            new_height = max(2, int(image.height * scale))
 
             image = image.resize(
                 (new_width, new_height),
-                Image.Resampling.LANCZOS
+                Image.Resampling.LANCZOS,
             )
 
             st.warning(
-                "⚠️ De originele foto was extreem groot. "
-                f"Deze is automatisch verkleind naar "
-                f"{new_width} × {new_height} om crashes te voorkomen."
+                f"⚠️ Grote afbeelding automatisch verkleind naar "
+                f"{new_width} × {new_height} px."
+            )
+
+        if image.width > MAX_INPUT_DIMENSION or image.height > MAX_INPUT_DIMENSION:
+            scale = min(
+                MAX_INPUT_DIMENSION / image.width,
+                MAX_INPUT_DIMENSION / image.height,
+            )
+
+            new_width = max(2, int(image.width * scale))
+            new_height = max(2, int(image.height * scale))
+
+            image = image.resize(
+                (new_width, new_height),
+                Image.Resampling.LANCZOS,
             )
 
         return image
 
     except Exception as e:
-
-        st.error(
-            "❌ Deze afbeelding kon niet worden geopend."
-        )
-
-        st.caption(
-            f"Technische melding: {type(e).__name__}"
-        )
-
+        st.error("❌ Deze afbeelding kon niet worden geopend.")
+        st.caption(f"Technische melding: {type(e).__name__}: {e}")
         return None
 
 
-def prepare_output_image(
-    img,
-    resolution
-):
+def prepare_output_image(img, resolution, for_video=False):
     """
-    Maakt de afbeelding klaar voor de gekozen output.
-    Cropt naar 16:9 en schaalt met Lanczos.
-    """
+    Maakt de afbeelding klaar voor output.
 
+    Voor video wordt altijd maximaal 1920×1080 gebruikt.
+    """
     try:
-
         if resolution == "1920x1080 (Full HD)":
-
             tw, th = 1920, 1080
 
         elif resolution == "1280x720 (HD)":
-
             tw, th = 1280, 720
 
         else:
+            if for_video:
+                # Nooit een enorme originele afbeelding naar video sturen.
+                scale = min(
+                    1.0,
+                    MAX_VIDEO_WIDTH / img.width,
+                    MAX_VIDEO_HEIGHT / img.height,
+                )
 
-            # Origineel, maar wel veilig begrensd.
-            w = min(
-                img.width,
-                MAX_ORIGINAL_DIMENSION
-            )
+                w = max(2, int(img.width * scale))
+                h = max(2, int(img.height * scale))
 
-            h = min(
-                img.height,
-                MAX_ORIGINAL_DIMENSION
-            )
+                # Voor stabiele video altijd even dimensies.
+                w -= w % 2
+                h -= h % 2
+
+                w = max(2, w)
+                h = max(2, h)
+
+                # Behoud aspect ratio voor "Origineel".
+                return img.resize(
+                    (w, h),
+                    Image.Resampling.LANCZOS,
+                )
+
+            w = min(img.width, MAX_INPUT_DIMENSION)
+            h = min(img.height, MAX_INPUT_DIMENSION)
 
             if w != img.width or h != img.height:
-
                 scale = min(
                     w / img.width,
-                    h / img.height
+                    h / img.height,
                 )
 
-                w = max(
-                    2,
-                    int(img.width * scale)
-                )
-
-                h = max(
-                    2,
-                    int(img.height * scale)
-                )
+                w = max(2, int(img.width * scale))
+                h = max(2, int(img.height * scale))
 
                 img = img.resize(
                     (w, h),
-                    Image.Resampling.LANCZOS
+                    Image.Resampling.LANCZOS,
                 )
 
-            # H.264 houdt van even afmetingen.
-            w = w - (w % 2)
-            h = h - (h % 2)
+            w -= w % 2
+            h -= h % 2
 
             return img.resize(
-                (w, h),
-                Image.Resampling.LANCZOS
+                (max(2, w), max(2, h)),
+                Image.Resampling.LANCZOS,
             )
 
-        # ----------------------------------------------------
-        # 16:9 CROP
-        # ----------------------------------------------------
+        # --------------------------------------------------------
+        # 16:9 crop
+        # --------------------------------------------------------
 
         source_ratio = img.width / img.height
         target_ratio = tw / th
 
         if source_ratio > target_ratio:
-
-            # Te breed -> zijkanten eraf.
-            new_width = int(
-                img.height * target_ratio
-            )
-
-            left = (
-                img.width - new_width
-            ) // 2
+            new_width = int(img.height * target_ratio)
+            left = (img.width - new_width) // 2
 
             img = img.crop(
                 (
                     left,
                     0,
                     left + new_width,
-                    img.height
+                    img.height,
                 )
             )
 
         elif source_ratio < target_ratio:
-
-            # Te hoog -> boven/onder eraf.
-            new_height = int(
-                img.width / target_ratio
-            )
-
-            top = (
-                img.height - new_height
-            ) // 2
+            new_height = int(img.width / target_ratio)
+            top = (img.height - new_height) // 2
 
             img = img.crop(
                 (
                     0,
                     top,
                     img.width,
-                    top + new_height
+                    top + new_height,
                 )
             )
 
-        # ----------------------------------------------------
-        # EXACTE OUTPUT RESOLUTIE
-        # ----------------------------------------------------
-
-        img = img.resize(
+        return img.resize(
             (tw, th),
-            Image.Resampling.LANCZOS
+            Image.Resampling.LANCZOS,
         )
 
-        return img
-
-    except Exception:
-
-        st.error(
-            "❌ De afbeelding kon niet naar de "
-            "gekozen resolutie worden omgezet."
-        )
-
+    except Exception as e:
+        st.error("❌ De afbeelding kon niet worden voorbereid.")
+        st.caption(f"Technische melding: {type(e).__name__}: {e}")
         return None
 
 
@@ -277,118 +286,74 @@ def generate_classic_glitch_data(
     height,
     bands_count,
     complexity_max,
-    seed=42
+    seed=42,
 ):
+    rng = np.random.default_rng(safe_int(seed, 42))
 
-    rng = np.random.default_rng(
-        int(seed)
-    )
-
-    # Veilig begrenzen.
-    bands_count = max(
-        1,
-        min(
-            int(bands_count),
-            height
-        )
-    )
-
-    complexity_max = max(
-        1,
-        min(
-            int(complexity_max),
-            10
-        )
-    )
+    bands_count = max(1, min(safe_int(bands_count, 100), height))
+    complexity_max = max(1, min(safe_int(complexity_max, 4), 10))
 
     band_edges = np.linspace(
         0,
         height,
-        bands_count + 1
+        bands_count + 1,
     ).astype(int)
 
     bands = []
 
     for i in range(bands_count):
-
         y1 = int(band_edges[i])
         y2 = int(band_edges[i + 1])
 
         if y2 <= y1:
             continue
 
-        # Segmenten mogen nooit groter zijn dan de breedte.
-        max_segments = min(
-            complexity_max,
-            width
-        )
+        max_segments = min(complexity_max, width)
 
         num_segments = int(
             rng.integers(
                 1,
-                max_segments + 1
+                max_segments + 1,
             )
         )
 
         if num_segments == 1:
-
             splits = [0, width]
-
         else:
-
-            possible = np.arange(
-                1,
-                width
-            )
+            possible = np.arange(1, width)
 
             if len(possible) < num_segments - 1:
-
                 num_segments = len(possible) + 1
 
             if num_segments <= 1:
-
                 splits = [0, width]
-
             else:
-
                 split_points = sorted(
                     rng.choice(
                         possible,
                         size=num_segments - 1,
-                        replace=False
+                        replace=False,
                     ).tolist()
                 )
 
-                splits = (
-                    [0]
-                    + split_points
-                    + [width]
-                )
+                splits = [0] + split_points + [width]
 
         segments = []
 
-        for j in range(
-            len(splits) - 1
-        ):
-
+        for j in range(len(splits) - 1):
             x1 = int(splits[j])
             x2 = int(splits[j + 1])
 
             if x2 <= x1:
                 continue
 
-            sample_x = int(
-                rng.integers(
-                    x1,
-                    x2
-                )
-            )
+            sample_x = int(rng.integers(x1, x2))
 
             segments.append(
                 {
                     "x1": x1,
                     "x2": x2,
-                    "sample_x": sample_x
+                    "sample_x": sample_x,
                 }
             )
 
@@ -397,19 +362,46 @@ def generate_classic_glitch_data(
                 "y1": y1,
                 "y2": y2,
                 "segments": segments,
-                "direction": int(
-                    rng.choice([-1, 1])
-                ),
-                "cycles": int(
-                    rng.integers(1, 4)
-                ),
-                "phase": float(
-                    rng.random() * 2 * math.pi
-                )
+                "direction": int(rng.choice([-1, 1])),
+                "cycles": int(rng.integers(1, 4)),
+                "phase": float(rng.random() * 2 * math.pi),
             }
         )
 
     return bands
+
+
+def render_static_classic(img_arr, bands):
+    h, w, channels = img_arr.shape
+
+    out_arr = np.empty_like(img_arr)
+
+    # Eerst de hele afbeelding kopiëren.
+    # Hierdoor blijven eventuele kleine lege gebieden geldig.
+    np.copyto(out_arr, img_arr)
+
+    for band in bands:
+        y1 = band["y1"]
+        y2 = band["y2"]
+
+        for seg in band["segments"]:
+            x1 = seg["x1"]
+            x2 = seg["x2"]
+            sx = seg["sample_x"]
+
+            src = img_arr[
+                y1:y2,
+                sx:sx + 1,
+                :,
+            ]
+
+            out_arr[
+                y1:y2,
+                x1:x2,
+                :,
+            ] = src
+
+    return out_arr
 
 
 # ============================================================
@@ -423,98 +415,39 @@ def generate_repponen_grid_data(
     base_rows,
     chaos_factor,
     brightness_var,
-    seed=42
+    seed=42,
 ):
+    rng = np.random.default_rng(safe_int(seed, 42))
 
-    rng = np.random.default_rng(
-        int(seed)
-    )
+    num_cols = max(2, min(safe_int(num_cols, 40), width))
+    base_rows = max(2, min(safe_int(base_rows, 100), height))
 
-    num_cols = max(
-        2,
-        min(
-            int(num_cols),
-            width
-        )
-    )
-
-    base_rows = max(
-        2,
-        min(
-            int(base_rows),
-            height
-        )
-    )
-
-    chaos_factor = float(
-        np.clip(
-            chaos_factor,
-            0.0,
-            0.8
-        )
-    )
-
-    brightness_var = float(
-        np.clip(
-            brightness_var,
-            0.0,
-            0.5
-        )
-    )
+    chaos_factor = float(np.clip(chaos_factor, 0.0, 0.8))
+    brightness_var = float(np.clip(brightness_var, 0.0, 0.5))
 
     blocks = []
 
-    # --------------------------------------------------------
-    # KOLOMMEN
-    # --------------------------------------------------------
+    # Gebruik vaste kolommen als veilige basis.
+    # De vorige versie kon door random stappen veel extra blokken maken.
+    base_col_width = width / num_cols
 
     col_edges = [0]
-    curr_x = 0
 
-    average_width = max(
-        1,
-        width / num_cols
-    )
-
-    safety_counter = 0
-    max_iterations = width + 10
-
-    while (
-        curr_x < width
-        and safety_counter < max_iterations
-    ):
-
-        step = max(
-            5,
-            int(
-                rng.normal(
-                    average_width,
-                    average_width * chaos_factor
-                )
-            )
+    for i in range(1, num_cols):
+        jitter = rng.normal(
+            0,
+            base_col_width * chaos_factor * 0.35,
         )
 
-        curr_x += step
+        x = int(round(i * base_col_width + jitter))
+        x = max(col_edges[-1] + 1, x)
+        x = min(width - (num_cols - i), x)
 
-        if curr_x >= width - 5:
-            break
-
-        col_edges.append(
-            curr_x
-        )
-
-        safety_counter += 1
+        col_edges.append(x)
 
     col_edges.append(width)
 
-    # --------------------------------------------------------
-    # BLOKKEN
-    # --------------------------------------------------------
-
-    for i in range(
-        len(col_edges) - 1
-    ):
-
+    for i in range(len(col_edges) - 1):
         x1 = int(col_edges[i])
         x2 = int(col_edges[i + 1])
 
@@ -529,76 +462,48 @@ def generate_repponen_grid_data(
                 base_rows
                 * rng.uniform(
                     1.0 - chaos_factor,
-                    1.0 + chaos_factor
+                    1.0 + chaos_factor,
                 )
-            )
+            ),
         )
 
-        average_height = max(
-            1,
-            height / target_rows
-        )
+        # Begrens rows zodat een slechte random instelling
+        # geen gigantische hoeveelheid kleine blokken maakt.
+        target_rows = min(target_rows, height)
+
+        base_height = height / target_rows
 
         row_edges = [0]
-        curr_y = 0
 
-        safety_counter = 0
-
-        while (
-            curr_y < height
-            and safety_counter < height + 10
-        ):
-
-            step = max(
-                2,
-                int(
-                    rng.normal(
-                        average_height,
-                        average_height
-                        * chaos_factor
-                    )
-                )
+        for j in range(1, target_rows):
+            jitter = rng.normal(
+                0,
+                base_height * chaos_factor * 0.35,
             )
 
-            curr_y += step
+            y = int(round(j * base_height + jitter))
+            y = max(row_edges[-1] + 1, y)
+            y = min(height - (target_rows - j), y)
 
-            if curr_y >= height - 2:
-                break
-
-            row_edges.append(
-                curr_y
-            )
-
-            safety_counter += 1
+            row_edges.append(y)
 
         row_edges.append(height)
 
-        for j in range(
-            len(row_edges) - 1
-        ):
-
+        for j in range(len(row_edges) - 1):
             y1 = int(row_edges[j])
             y2 = int(row_edges[j + 1])
 
             if y2 <= y1:
                 continue
 
-            sample_x = int(
-                rng.integers(
-                    x1,
-                    x2
-                )
-            )
+            sample_x = int(rng.integers(x1, x2))
 
             if brightness_var > 0:
-
                 brightness_value = rng.uniform(
                     1.0 - brightness_var,
-                    1.0 + brightness_var
+                    1.0 + brightness_var,
                 )
-
             else:
-
                 brightness_value = 1.0
 
             blocks.append(
@@ -608,82 +513,23 @@ def generate_repponen_grid_data(
                     "y1": y1,
                     "y2": y2,
                     "sample_x": sample_x,
-                    "brightness": float(
-                        brightness_value
-                    ),
-                    "phase": float(
-                        rng.random() * 2 * math.pi
-                    ),
+                    "brightness": float(brightness_value),
+                    "phase": float(rng.random() * 2 * math.pi),
                     "speed": float(
                         rng.uniform(0.1, 1.0)
                         * rng.choice([-1, 1])
-                    )
+                    ),
                 }
             )
 
     return blocks
 
 
-# ============================================================
-# 6. STATIC CLASSIC RENDER
-# ============================================================
-
-def render_static_classic(
-    img_arr,
-    bands
-):
-
-    h, w, _ = img_arr.shape
-
-    out_arr = np.empty_like(
-        img_arr
-    )
-
-    for band in bands:
-
-        y1 = band["y1"]
-        y2 = band["y2"]
-
-        for seg in band["segments"]:
-
-            x1 = seg["x1"]
-            x2 = seg["x2"]
-            sx = seg["sample_x"]
-
-            src = img_arr[
-                y1:y2,
-                sx:sx + 1,
-                :
-            ]
-
-            out_arr[
-                y1:y2,
-                x1:x2,
-                :
-            ] = np.repeat(
-                src,
-                x2 - x1,
-                axis=1
-            )
-
-    return out_arr
-
-
-# ============================================================
-# 7. STATIC GRID RENDER
-# ============================================================
-
-def render_static_grid(
-    img_arr,
-    blocks
-):
-
-    out_arr = np.empty_like(
-        img_arr
-    )
+def render_static_grid(img_arr, blocks):
+    out_arr = np.empty_like(img_arr)
+    np.copyto(out_arr, img_arr)
 
     for b in blocks:
-
         x1 = b["x1"]
         x2 = b["x2"]
         y1 = b["y1"]
@@ -693,42 +539,48 @@ def render_static_grid(
             np.clip(
                 b["sample_x"],
                 x1,
-                x2 - 1
+                x2 - 1,
             )
         )
 
         bw = x2 - x1
 
-        stretched = np.repeat(
-            img_arr[
-                y1:y2,
-                sx:sx + 1,
-                :
-            ],
-            bw,
-            axis=1
+        if bw <= 0:
+            continue
+
+        src = img_arr[
+            y1:y2,
+            sx:sx + 1,
+            :,
+        ]
+
+        # Broadcasting is veel zuiniger dan np.repeat:
+        # de pixelkolom hoeft niet eerst volledig gekopieerd
+        # te worden naar een tijdelijk array.
+        block = np.broadcast_to(
+            src,
+            (y2 - y1, bw, 3),
         )
 
         if b["brightness"] != 1.0:
-
-            stretched = np.clip(
-                stretched.astype(np.float32)
+            block = np.clip(
+                block.astype(np.float32)
                 * b["brightness"],
                 0,
-                255
+                255,
             ).astype(np.uint8)
 
         out_arr[
             y1:y2,
             x1:x2,
-            :
-        ] = stretched
+            :,
+        ] = block
 
     return out_arr
 
 
 # ============================================================
-# 8. FFMPEG VIDEO RENDER
+# 6. VIDEO RENDER
 # ============================================================
 
 def render_video(
@@ -746,136 +598,125 @@ def render_video(
     anim_speed,
     crf,
     preset,
-    progress_bar
+    progress_bar,
 ):
-
     h, w, _ = img_arr.shape
 
-    total_frames = int(
-        duration * fps
+    # Harde beveiliging.
+    fps = max(1, min(safe_int(fps, 30), MAX_VIDEO_FPS))
+    duration = max(
+        1,
+        min(safe_int(duration, 10), MAX_VIDEO_DURATION),
+    )
+
+    total_frames = min(
+        duration * fps,
+        MAX_VIDEO_FRAMES,
     )
 
     if total_frames <= 0:
+        raise ValueError("Het aantal frames is ongeldig.")
+
+    if w > MAX_VIDEO_WIDTH or h > MAX_VIDEO_HEIGHT:
         raise ValueError(
-            "Het aantal frames is ongeldig."
+            f"Videoresolutie {w}×{h} is te groot. "
+            "Gebruik maximaal 1920×1080."
         )
 
     if not check_ffmpeg():
-
         raise RuntimeError(
-            "FFmpeg is niet geïnstalleerd "
-            "of niet beschikbaar in deze omgeving."
+            "FFmpeg is niet geïnstalleerd of niet beschikbaar."
         )
 
     output_path = None
     proc = None
 
     try:
-
-        # ----------------------------------------------------
-        # OUTPUT FILE
-        # ----------------------------------------------------
-
         tmp = tempfile.NamedTemporaryFile(
             delete=False,
-            suffix=".mp4"
+            suffix=".mp4",
         )
 
         output_path = tmp.name
         tmp.close()
-
-        # ----------------------------------------------------
-        # FFMPEG COMMAND
-        # ----------------------------------------------------
 
         cmd = [
             "ffmpeg",
             "-y",
             "-loglevel",
             "error",
-
             "-f",
             "rawvideo",
-
             "-vcodec",
             "rawvideo",
-
             "-pix_fmt",
             "rgb24",
-
             "-s",
             f"{w}x{h}",
-
             "-r",
             str(fps),
-
             "-i",
             "-",
-
             "-an",
-
             "-c:v",
             "libx264",
-
             "-preset",
             preset,
-
             "-crf",
             str(crf),
-
             "-pix_fmt",
             "yuv420p",
-
             "-movflags",
             "+faststart",
-
-            output_path
+            output_path,
         ]
 
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE
+            stderr=subprocess.PIPE,
         )
-
-        # ----------------------------------------------------
-        # CLASSIC VOORBEREIDEN
-        # ----------------------------------------------------
 
         bands = None
         pre_rows = None
+        blocks = None
+
+        # --------------------------------------------------------
+        # CLASSIC VOORBEREIDEN
+        # --------------------------------------------------------
 
         if stijl == "Classic Glitch (Vloeiend)":
-
             bands = generate_classic_glitch_data(
                 w,
                 h,
                 bands_count,
                 complexity,
-                seed_val
+                seed_val,
             )
 
             pre_rows = []
 
             for b in bands:
-
-                band_height = (
-                    b["y2"] - b["y1"]
-                )
+                band_height = b["y2"] - b["y1"]
 
                 row = np.empty(
                     (
                         band_height,
                         w,
-                        3
+                        3,
                     ),
-                    dtype=np.uint8
+                    dtype=np.uint8,
                 )
 
-                # Alle segmenten vullen.
-                for seg in b["segments"]:
+                # Eerst vullen met origineel.
+                row[:] = img_arr[
+                    b["y1"]:b["y2"],
+                    :,
+                    :,
+                ]
 
+                for seg in b["segments"]:
                     x1 = seg["x1"]
                     x2 = seg["x2"]
                     sx = seg["sample_x"]
@@ -883,29 +724,23 @@ def render_video(
                     src = img_arr[
                         b["y1"]:b["y2"],
                         sx:sx + 1,
-                        :
+                        :,
                     ]
 
+                    # Broadcasting i.p.v. np.repeat.
                     row[
                         :,
                         x1:x2,
-                        :
-                    ] = np.repeat(
-                        src,
-                        x2 - x1,
-                        axis=1
-                    )
+                        :,
+                    ] = src
 
-                pre_rows.append(
-                    row
-                )
+                pre_rows.append(row)
 
-        # ----------------------------------------------------
+        # --------------------------------------------------------
         # GRID VOORBEREIDEN
-        # ----------------------------------------------------
+        # --------------------------------------------------------
 
         else:
-
             blocks = generate_repponen_grid_data(
                 w,
                 h,
@@ -913,77 +748,67 @@ def render_video(
                 base_rows,
                 chaos,
                 brightness,
-                seed_val
+                seed_val,
             )
 
-        # ----------------------------------------------------
+        # --------------------------------------------------------
         # FRAMES
-        # ----------------------------------------------------
+        # --------------------------------------------------------
 
-        for frame_number in range(
-            total_frames
-        ):
+        for frame_number in range(total_frames):
+            t = frame_number / fps
 
-            t = (
-                frame_number / fps
-            )
+            # Eén output-frame.
+            f_out = np.empty_like(img_arr)
+            np.copyto(f_out, img_arr)
 
-            # Altijd volledig gevuld.
-            f_out = np.empty_like(
-                img_arr
-            )
-
-            # =================================================
+            # ====================================================
             # CLASSIC
-            # =================================================
+            # ====================================================
 
             if stijl == "Classic Glitch (Vloeiend)":
-
                 for idx, b in enumerate(bands):
-
-                    # Soepele beweging.
                     angle = (
                         2
                         * math.pi
                         * (
                             b["cycles"]
                             * t
-                            / duration
+                            / max(duration, 1)
                         )
                         + b["phase"]
                     )
 
-                    movement = math.sin(
-                        angle
-                    )
+                    movement = math.sin(angle)
 
                     shift = int(
                         movement
-                        * (
-                            w * 0.5
-                        )
+                        * (w * 0.5)
                         * b["direction"]
                         * anim_speed
+                    )
+
+                    # np.roll maakt één tijdelijk band-array.
+                    shifted = np.roll(
+                        pre_rows[idx],
+                        shift,
+                        axis=1,
                     )
 
                     f_out[
                         b["y1"]:b["y2"],
                         :,
-                        :
-                    ] = np.roll(
-                        pre_rows[idx],
-                        shift,
-                        axis=1
-                    )
+                        :,
+                    ] = shifted
 
-            # =================================================
+                    del shifted
+
+            # ====================================================
             # REPONENEN GRID
-            # =================================================
+            # ====================================================
 
             else:
-
                 for b in blocks:
-
                     x1 = b["x1"]
                     x2 = b["x2"]
                     y1 = b["y1"]
@@ -1001,134 +826,114 @@ def render_video(
                             * b["speed"]
                             + b["phase"]
                         )
-                        * (
-                            bw / 2.5
-                        )
+                        * (bw / 2.5)
                     )
 
                     sx = int(
                         np.clip(
-                            b["sample_x"]
-                            + offset,
+                            b["sample_x"] + offset,
                             x1,
-                            x2 - 1
+                            x2 - 1,
                         )
                     )
 
-                    stretched = np.repeat(
-                        img_arr[
-                            y1:y2,
-                            sx:sx + 1,
-                            :
-                        ],
-                        bw,
-                        axis=1
+                    src = img_arr[
+                        y1:y2,
+                        sx:sx + 1,
+                        :,
+                    ]
+
+                    block = np.broadcast_to(
+                        src,
+                        (y2 - y1, bw, 3),
                     )
 
                     if b["brightness"] != 1.0:
-
-                        stretched = np.clip(
-                            stretched.astype(
-                                np.float32
-                            )
+                        block = np.clip(
+                            block.astype(np.float32)
                             * b["brightness"],
                             0,
-                            255
-                        ).astype(
-                            np.uint8
-                        )
+                            255,
+                        ).astype(np.uint8)
 
                     f_out[
                         y1:y2,
                         x1:x2,
-                        :
-                    ] = stretched
+                        :,
+                    ] = block
 
-            # ------------------------------------------------
+                    del block
+
+            # ----------------------------------------------------
             # NAAR FFMPEG
-            # ------------------------------------------------
+            # ----------------------------------------------------
 
             try:
-
-                proc.stdin.write(
-                    f_out.tobytes()
-                )
+                proc.stdin.write(f_out.tobytes())
 
             except BrokenPipeError:
-
-                # FFmpeg is gestopt.
                 stderr_data = b""
 
                 try:
-                    stderr_data = (
-                        proc.stderr.read()
-                    )
+                    stderr_data = proc.stderr.read()
                 except Exception:
                     pass
 
                 message = (
                     stderr_data.decode(
                         "utf-8",
-                        errors="replace"
+                        errors="replace",
                     )
                     if stderr_data
                     else "FFmpeg stopte onverwacht."
                 )
 
-                raise RuntimeError(
-                    message
-                )
+                raise RuntimeError(message)
 
-            # ------------------------------------------------
+            finally:
+                del f_out
+
+            # ----------------------------------------------------
             # PROGRESS
-            # ------------------------------------------------
+            # ----------------------------------------------------
 
             if (
-                frame_number % max(
-                    1,
-                    fps // 2
-                ) == 0
+                frame_number % max(1, fps // 2) == 0
+                or frame_number == total_frames - 1
             ):
-
                 progress_bar.progress(
                     min(
                         1.0,
-                        (
-                            frame_number + 1
-                        )
-                        / total_frames
+                        (frame_number + 1) / total_frames,
                     )
                 )
 
-        # ----------------------------------------------------
+        # --------------------------------------------------------
         # INPUT SLUITEN
-        # ----------------------------------------------------
+        # --------------------------------------------------------
 
         try:
             proc.stdin.close()
         except Exception:
             pass
 
-        # ----------------------------------------------------
+        # --------------------------------------------------------
         # FFmpeg AFWACHTEN
-        # ----------------------------------------------------
+        # --------------------------------------------------------
 
         return_code = proc.wait()
 
         stderr_data = b""
 
         try:
-            stderr_data = (
-                proc.stderr.read()
-            )
+            stderr_data = proc.stderr.read()
         except Exception:
             pass
 
         if return_code != 0:
-
             error_text = stderr_data.decode(
                 "utf-8",
-                errors="replace"
+                errors="replace",
             )
 
             raise RuntimeError(
@@ -1136,28 +941,16 @@ def render_video(
                 or "FFmpeg kon de video niet renderen."
             )
 
-        # ----------------------------------------------------
-        # CONTROLEREN OF BESTAND BESTAAT
-        # ----------------------------------------------------
-
-        if (
-            not output_path
-            or not os.path.exists(output_path)
-        ):
-
+        if not output_path or not os.path.exists(output_path):
             raise RuntimeError(
                 "FFmpeg heeft geen MP4-bestand geproduceerd."
             )
 
-        file_size = os.path.getsize(
-            output_path
-        )
+        file_size = os.path.getsize(output_path)
 
         if file_size < 1000:
-
             raise RuntimeError(
-                "Het gegenereerde videobestand "
-                "is ongeldig of leeg."
+                "Het gegenereerde MP4-bestand is ongeldig of leeg."
             )
 
         progress_bar.progress(1.0)
@@ -1165,9 +958,7 @@ def render_video(
         return output_path
 
     except Exception:
-
         if proc is not None:
-
             try:
                 if proc.poll() is None:
                     proc.kill()
@@ -1175,27 +966,39 @@ def render_video(
                 pass
 
             try:
-                proc.stdin.close()
+                if proc.stdin:
+                    proc.stdin.close()
             except Exception:
                 pass
 
-        cleanup_file(
-            output_path
-        )
-
+        cleanup_file(output_path)
         raise
 
     finally:
-
         gc.collect()
 
 
 # ============================================================
-# 9. SIDEBAR
+# 7. DOWNLOAD HELPERS
+# ============================================================
+
+def make_png_bytes(image):
+    buffer = io.BytesIO()
+
+    image.save(
+        buffer,
+        format="PNG",
+        optimize=True,
+    )
+
+    return buffer.getvalue()
+
+
+# ============================================================
+# 8. SIDEBAR
 # ============================================================
 
 with st.sidebar:
-
     st.title("🎛️ Project Setup")
 
     uploaded = st.file_uploader(
@@ -1204,74 +1007,79 @@ with st.sidebar:
             "jpg",
             "jpeg",
             "png",
-            "webp"
-        ]
+            "webp",
+        ],
+        help=f"Maximum {MAX_UPLOAD_MB} MB.",
     )
 
     stijl = st.selectbox(
         "2. Engine",
         [
             "Classic Glitch (Vloeiend)",
-            "Repponen Grid (Blokken)"
-        ]
+            "Repponen Grid (Blokken)",
+        ],
     )
 
     modus = st.radio(
         "3. Output Type",
         [
             "🖼️ Statisch Beeld",
-            "🎥 Motion (MP4)"
-        ]
+            "🎥 Motion (MP4)",
+        ],
     )
 
 
 # ============================================================
-# 10. HOOFDAPP
+# 9. START
 # ============================================================
 
 if not uploaded:
-
     st.info(
-        "👋 Sleep een afbeelding in het uploadveld "
-        "om te beginnen."
+        "👋 Sleep een afbeelding in het uploadveld om te beginnen."
     )
+
+    if modus == "🎥 Motion (MP4)":
+        if check_ffmpeg():
+            st.caption(f"✅ {get_ffmpeg_version()}")
+        else:
+            st.warning(
+                "⚠️ FFmpeg is niet gevonden. "
+                "Motion/MP4 werkt dan niet."
+            )
 
     st.stop()
 
 
 # ============================================================
-# 11. AFBEELDING LADEN
+# 10. AFBEELDING LADEN
 # ============================================================
 
-img = load_image_safely(
-    uploaded
-)
+img = image_from_uploaded_file(uploaded)
 
 if img is None:
     st.stop()
 
 
 # ============================================================
-# 12. COLUMNS
+# 11. COLUMNS
 # ============================================================
 
 col_controls, col_canvas = st.columns(
     [1.2, 2],
-    gap="large"
+    gap="large",
 )
 
 
 # ============================================================
-# 13. CONTROLS
+# 12. CONTROLS
 # ============================================================
 
 with col_controls:
-
     tab_design, tab_motion, tab_render = st.tabs(
         [
             "🎨 Vormgeving",
             "🎞️ Motion",
-            "⚙️ Export"
+            "⚙️ Export",
         ]
     )
 
@@ -1280,41 +1088,42 @@ with col_controls:
     # --------------------------------------------------------
 
     with tab_design:
-
-        st.subheader(
-            "Look & Feel"
-        )
+        st.subheader("Look & Feel")
 
         if stijl == "Classic Glitch (Vloeiend)":
-
             bands_count = st.slider(
                 "Glitch Dichtheid",
                 10,
                 300,
-                100
+                100,
             )
 
             complexity = st.slider(
                 "Segment Complexiteit",
                 1,
                 10,
-                4
+                4,
             )
 
-        else:
+            # Variabelen voor andere engine.
+            num_cols = 40
+            base_rows = 100
+            chaos = 0.35
+            brightness = 0.15
 
+        else:
             num_cols = st.slider(
                 "Verticale Kolommen",
                 2,
                 150,
-                40
+                40,
             )
 
             base_rows = st.slider(
                 "Horizontale Rijen",
                 10,
                 300,
-                100
+                100,
             )
 
             chaos = st.slider(
@@ -1322,7 +1131,7 @@ with col_controls:
                 0.0,
                 0.8,
                 0.35,
-                step=0.05
+                step=0.05,
             )
 
             brightness = st.slider(
@@ -1330,13 +1139,16 @@ with col_controls:
                 0.0,
                 0.5,
                 0.15,
-                step=0.05
+                step=0.05,
             )
+
+            bands_count = 100
+            complexity = 4
 
         seed_val = st.number_input(
             "Variatie Seed",
             value=42,
-            step=1
+            step=1,
         )
 
     # --------------------------------------------------------
@@ -1344,19 +1156,15 @@ with col_controls:
     # --------------------------------------------------------
 
     with tab_motion:
-
         if modus == "🎥 Motion (MP4)":
-
-            st.subheader(
-                "Animatie Dynamiek"
-            )
+            st.subheader("Animatie Dynamiek")
 
             anim_speed = st.slider(
                 "Globale Snelheid",
                 0.05,
                 5.0,
                 1.0,
-                step=0.05
+                step=0.05,
             )
 
             duration = st.select_slider(
@@ -1365,18 +1173,33 @@ with col_controls:
                     5,
                     10,
                     15,
+                    20,
                     30,
-                    45,
-                    60
                 ],
-                value=10
+                value=10,
+            )
+
+            fps = st.select_slider(
+                "Framerate",
+                options=[
+                    24,
+                    30,
+                ],
+                value=30,
+            )
+
+            st.caption(
+                f"Beveiligd maximum: {MAX_VIDEO_DURATION}s / "
+                f"{MAX_VIDEO_FPS} FPS / 1920×1080."
             )
 
         else:
+            anim_speed = 1.0
+            duration = 10
+            fps = 30
 
             st.info(
-                "Schakel naar Motion (MP4) "
-                "voor animatie-instellingen."
+                "Schakel naar Motion (MP4) voor animatie-instellingen."
             )
 
     # --------------------------------------------------------
@@ -1384,161 +1207,148 @@ with col_controls:
     # --------------------------------------------------------
 
     with tab_render:
+        st.subheader("Output Kwaliteit")
 
-        st.subheader(
-            "Output Kwaliteit"
-        )
+        if modus == "🎥 Motion (MP4)":
+            resolution_options = [
+                "1920x1080 (Full HD)",
+                "1280x720 (HD)",
+                "Origineel",
+            ]
+        else:
+            resolution_options = [
+                "1920x1080 (Full HD)",
+                "1280x720 (HD)",
+                "Origineel",
+            ]
 
         resolutie = st.selectbox(
             "Resolutie",
-            [
-                "Origineel",
-                "1920x1080 (Full HD)",
-                "1280x720 (HD)"
-            ],
-            index=1
+            resolution_options,
+            index=0,
         )
 
         if modus == "🎥 Motion (MP4)":
-
-            fps = st.selectbox(
-                "Framerate",
-                [
-                    24,
-                    30,
-                    60
-                ],
-                index=1
-            )
-
             quality = st.selectbox(
                 "Videokwaliteit",
                 [
-                    "💎 Maximale kwaliteit",
                     "🔥 Zeer hoge kwaliteit",
-                    "⚡ Sneller renderen"
+                    "⚡ Sneller renderen",
+                    "💎 Maximale kwaliteit",
                 ],
-                index=0
+                index=0,
             )
 
             if quality == "💎 Maximale kwaliteit":
-
-                crf = 12
-                preset = "slow"
-
-            elif quality == "🔥 Zeer hoge kwaliteit":
-
                 crf = 16
                 preset = "medium"
 
-            else:
-
-                crf = 20
+            elif quality == "🔥 Zeer hoge kwaliteit":
+                crf = 18
                 preset = "fast"
+
+            else:
+                crf = 21
+                preset = "veryfast"
 
             st.caption(
                 f"H.264 • CRF {crf} • preset {preset}"
             )
 
+        else:
+            crf = 18
+            preset = "fast"
+
         render_btn = st.button(
             "🚀 Start Render",
-            type="primary"
+            type="primary",
         )
 
 
 # ============================================================
-# 14. CANVAS
+# 13. CANVAS
 # ============================================================
 
 with col_canvas:
-
     with st.expander(
         "📸 Bekijk bronbestand",
-        expanded=False
+        expanded=False,
     ):
-
         st.image(
             img,
-            use_container_width=True
+            use_container_width=True,
         )
 
     if render_btn:
-
         # ----------------------------------------------------
         # FFmpeg CHECK
         # ----------------------------------------------------
 
         if modus == "🎥 Motion (MP4)":
-
             if not check_ffmpeg():
-
                 st.error(
-                    "❌ FFmpeg is niet beschikbaar. "
-                    "Controleer of `ffmpeg` in packages.txt staat."
+                    "❌ FFmpeg is niet beschikbaar."
                 )
-
+                st.info(
+                    "Voeg `ffmpeg` toe aan packages.txt "
+                    "als je Streamlit Cloud gebruikt."
+                )
                 st.stop()
 
         # ----------------------------------------------------
-        # OUTPUT IMAGE MAKEN
+        # OUTPUT IMAGE
         # ----------------------------------------------------
 
-        with st.spinner(
-            "Afbeelding voorbereiden..."
-        ):
-
+        with st.spinner("Afbeelding voorbereiden..."):
             target_img = prepare_output_image(
                 img,
-                resolutie
+                resolutie,
+                for_video=(modus == "🎥 Motion (MP4)"),
             )
 
         if target_img is None:
             st.stop()
 
-        try:
+        img_arr = None
+        output_path = None
 
+        try:
             # ------------------------------------------------
             # NUMPY
             # ------------------------------------------------
 
             img_arr = np.asarray(
                 target_img,
-                dtype=np.uint8
-            )
+                dtype=np.uint8,
+            ).copy()
 
             h, w, _ = img_arr.shape
 
-            st.write(
-                f"**Output:** {w} × {h} px"
-            )
+            st.write(f"**Output:** {w} × {h} px")
 
-            # =================================================
+            # ------------------------------------------------
             # STATISCH
-            # =================================================
+            # ------------------------------------------------
 
             if modus == "🖼️ Statisch Beeld":
-
                 with st.spinner(
                     "Glitch afbeelding maken..."
                 ):
-
                     if stijl == "Classic Glitch (Vloeiend)":
-
                         bands = generate_classic_glitch_data(
                             w,
                             h,
                             bands_count,
                             complexity,
-                            seed_val
+                            seed_val,
                         )
 
                         out_arr = render_static_classic(
                             img_arr,
-                            bands
+                            bands,
                         )
 
                     else:
-
                         blocks = generate_repponen_grid_data(
                             w,
                             h,
@@ -1546,17 +1356,15 @@ with col_canvas:
                             base_rows,
                             chaos,
                             brightness,
-                            seed_val
+                            seed_val,
                         )
 
                         out_arr = render_static_grid(
                             img_arr,
-                            blocks
+                            blocks,
                         )
 
-                    res_img = Image.fromarray(
-                        out_arr
-                    )
+                    res_img = Image.fromarray(out_arr)
 
                 st.success(
                     "✅ Glitch afbeelding klaar!"
@@ -1564,42 +1372,30 @@ with col_canvas:
 
                 st.image(
                     res_img,
-                    use_container_width=True
+                    use_container_width=True,
                 )
 
-                # --------------------------------------------
-                # PNG DOWNLOAD
-                # --------------------------------------------
-
-                buf = io.BytesIO()
-
-                res_img.save(
-                    buf,
-                    format="PNG",
-                    optimize=True
-                )
+                # PNG maximaal één keer in geheugen.
+                with st.spinner("PNG voorbereiden..."):
+                    png_bytes = make_png_bytes(res_img)
 
                 st.download_button(
                     "⬇️ Download PNG",
-                    data=buf.getvalue(),
+                    data=png_bytes,
                     file_name="glitch_export.png",
-                    mime="image/png"
+                    mime="image/png",
                 )
 
-                # Vrijgeven
                 del out_arr
+                del res_img
+                del png_bytes
 
-                gc.collect()
-
-            # =================================================
+            # ------------------------------------------------
             # VIDEO
-            # =================================================
+            # ------------------------------------------------
 
             else:
-
-                total_frames = (
-                    int(duration * fps)
-                )
+                total_frames = int(duration * fps)
 
                 st.write(
                     f"**Video:** {duration} sec • "
@@ -1607,102 +1403,113 @@ with col_canvas:
                     f"{total_frames} frames"
                 )
 
-                progress = st.progress(
-                    0
-                )
-
-                output_path = None
+                progress = st.progress(0)
 
                 try:
-
                     output_path = render_video(
                         img_arr=img_arr,
                         stijl=stijl,
-                        bands_count=bands_count
-                        if stijl == "Classic Glitch (Vloeiend)"
-                        else 100,
-                        complexity=complexity
-                        if stijl == "Classic Glitch (Vloeiend)"
-                        else 4,
-                        num_cols=num_cols
-                        if stijl != "Classic Glitch (Vloeiend)"
-                        else 40,
-                        base_rows=base_rows
-                        if stijl != "Classic Glitch (Vloeiend)"
-                        else 100,
-                        chaos=chaos
-                        if stijl != "Classic Glitch (Vloeiend)"
-                        else 0.35,
-                        brightness=brightness
-                        if stijl != "Classic Glitch (Vloeiend)"
-                        else 0.15,
+                        bands_count=(
+                            bands_count
+                            if stijl == "Classic Glitch (Vloeiend)"
+                            else 100
+                        ),
+                        complexity=(
+                            complexity
+                            if stijl == "Classic Glitch (Vloeiend)"
+                            else 4
+                        ),
+                        num_cols=(
+                            num_cols
+                            if stijl != "Classic Glitch (Vloeiend)"
+                            else 40
+                        ),
+                        base_rows=(
+                            base_rows
+                            if stijl != "Classic Glitch (Vloeiend)"
+                            else 100
+                        ),
+                        chaos=(
+                            chaos
+                            if stijl != "Classic Glitch (Vloeiend)"
+                            else 0.35
+                        ),
+                        brightness=(
+                            brightness
+                            if stijl != "Classic Glitch (Vloeiend)"
+                            else 0.15
+                        ),
                         seed_val=seed_val,
                         duration=duration,
                         fps=fps,
                         anim_speed=anim_speed,
                         crf=crf,
                         preset=preset,
-                        progress_bar=progress
+                        progress_bar=progress,
                     )
 
-                    # ----------------------------------------
-                    # MP4 INLEZEN
-                    # ----------------------------------------
+                    # ------------------------------------------------
+                    # MP4
+                    # ------------------------------------------------
+                    #
+                    # Geen video_file.read() meer.
+                    # Streamlit krijgt het bestandspad voor de preview.
+                    # Voor de download wordt alleen de benodigde data
+                    # ingelezen op het moment dat de gebruiker de
+                    # downloadknop gebruikt via een tijdelijke resource.
+                    #
 
-                    with open(
-                        output_path,
-                        "rb"
-                    ) as video_file:
-
-                        video_bytes = (
-                            video_file.read()
-                        )
-
-                    # ----------------------------------------
-                    # RESULTAAT
-                    # ----------------------------------------
+                    file_size_mb = (
+                        os.path.getsize(output_path)
+                        / (1024 * 1024)
+                    )
 
                     st.success(
-                        "✅ Render voltooid!"
+                        f"✅ Render voltooid! "
+                        f"MP4: {file_size_mb:.1f} MB"
                     )
 
-                    st.video(
-                        video_bytes
-                    )
+                    st.video(output_path)
+
+                    # Streamlit heeft voor download data nodig.
+                    # We lezen het bestand pas hier in, dus tijdens
+                    # het zware renderproces blijft deze extra kopie
+                    # uit RAM.
+                    #
+                    # Bij normale renders is dit veel veiliger dan
+                    # video_bytes tijdens de volledige render opbouwen.
+                    with open(output_path, "rb") as video_file:
+                        video_bytes = video_file.read()
 
                     st.download_button(
                         "⬇️ Download MP4",
                         data=video_bytes,
-                        file_name=(
-                            "smooth_glitch_full_hd.mp4"
-                        ),
-                        mime="video/mp4"
+                        file_name="smooth_glitch.mp4",
+                        mime="video/mp4",
                     )
 
-                except MemoryError:
+                    del video_bytes
 
+                except MemoryError:
                     st.error(
                         "❌ Onvoldoende geheugen tijdens het renderen."
                     )
 
                     st.info(
-                        "Probeer eerst 1280×720, "
-                        "30 FPS of een kortere video."
+                        "Gebruik 1280×720, 24/30 FPS en maximaal "
+                        "10–15 seconden."
                     )
 
                 except BrokenPipeError:
-
                     st.error(
                         "❌ FFmpeg is onverwacht gestopt."
                     )
 
                     st.info(
-                        "Probeer 1280×720 of een lagere "
-                        "videokwaliteit."
+                        "Probeer 1280×720 of een kortere video."
                     )
 
                 except Exception as e:
-
                     st.error(
                         "❌ De render is niet gelukt."
                     )
@@ -1715,26 +1522,15 @@ with col_canvas:
                     with st.expander(
                         "🔧 Technische details"
                     ):
-
-                        st.code(
-                            str(e)
-                        )
+                        st.code(str(e))
 
                 finally:
+                    cleanup_file(output_path)
+                    output_path = None
 
-                    # ----------------------------------------
-                    # ALTIJD OPSCHONEN
-                    # ----------------------------------------
-
-                    cleanup_file(
-                        output_path
-                    )
-
-                    gc.collect()
-
-            # ----------------------------------------------
+            # ------------------------------------------------
             # GEHEUGEN VRIJGEVEN
-            # ----------------------------------------------
+            # ------------------------------------------------
 
             del img_arr
             del target_img
@@ -1742,32 +1538,38 @@ with col_canvas:
             gc.collect()
 
         except MemoryError:
-
             st.error(
-                "❌ De afbeelding is te groot voor "
-                "het beschikbare geheugen."
+                "❌ De afbeelding is te groot voor het beschikbare geheugen."
             )
 
             st.info(
-                "Gebruik 1920×1080 of 1280×720 "
-                "in plaats van 'Origineel'."
+                "Gebruik 1920×1080 of 1280×720."
             )
 
         except Exception as e:
-
             st.error(
                 "❌ Er ging iets mis tijdens het renderen."
             )
 
             st.caption(
-                f"Technische fout: "
-                f"{type(e).__name__}"
+                f"Technische fout: {type(e).__name__}"
             )
 
-            with st.expander(
-                "🔧 Technische details"
-            ):
+            with st.expander("🔧 Technische details"):
+                st.code(str(e))
 
-                st.code(
-                    str(e)
-                )
+        finally:
+            if img_arr is not None:
+                try:
+                    del img_arr
+                except Exception:
+                    pass
+
+            if target_img is not None:
+                try:
+                    del target_img
+                except Exception:
+                    pass
+
+            cleanup_file(output_path)
+            gc.collect()
