@@ -1,1 +1,3 @@
-imageio-ffmpeg
+streamlit
+numpy
+Pillow
