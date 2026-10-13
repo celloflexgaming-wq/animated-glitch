@@ -11,10 +11,26 @@ import gc
 import time
 
 # ============================================================
-# NIEUW: FFmpeg via Python inladen (omzeilt server crashes)
+# FFmpeg detectie: gebruik systeem-FFmpeg of imageio-ffmpeg
+# Vermijd static_ffmpeg.add_paths(), dat op Streamlit Cloud
+# kan crashen door schrijfrechten op de download-/lockmap.
 # ============================================================
-import static_ffmpeg
-static_ffmpeg.add_paths()
+def get_ffmpeg_executable():
+    """Geef een bruikbaar FFmpeg-pad terug, of None als het ontbreekt."""
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+
+    try:
+        import imageio_ffmpeg
+        bundled_ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        if bundled_ffmpeg and os.path.isfile(bundled_ffmpeg) and os.access(bundled_ffmpeg, os.X_OK):
+            return bundled_ffmpeg
+    except Exception:
+        # De app kan nog steeds statische afbeeldingen verwerken zonder FFmpeg.
+        pass
+
+    return None
 
 # ============================================================
 # 1. STREAMLIT CONFIG
@@ -75,14 +91,15 @@ def cleanup_file(path):
             pass
 
 def check_ffmpeg():
-    return shutil.which("ffmpeg") is not None
+    return get_ffmpeg_executable() is not None
 
 def get_ffmpeg_version():
-    if not check_ffmpeg():
+    ffmpeg_exe = get_ffmpeg_executable()
+    if not ffmpeg_exe:
         return None
     try:
         result = subprocess.run(
-            ["ffmpeg", "-version"],
+            [ffmpeg_exe, "-version"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -329,8 +346,12 @@ def render_video(img_arr, stijl, bands_count, complexity, num_cols, base_rows, c
         raise ValueError("Het aantal frames is ongeldig.")
     if w > MAX_VIDEO_WIDTH or h > MAX_VIDEO_HEIGHT:
         raise ValueError(f"Videoresolutie {w}×{h} is te groot. Gebruik maximaal 1920×1080.")
-    if not check_ffmpeg():
-        raise RuntimeError("FFmpeg is niet geïnstalleerd of niet beschikbaar.")
+    ffmpeg_exe = get_ffmpeg_executable()
+    if not ffmpeg_exe:
+        raise RuntimeError(
+            "FFmpeg is niet beschikbaar. Voeg 'imageio-ffmpeg' toe aan requirements.txt "
+            "of installeer FFmpeg via packages.txt."
+        )
 
     output_path = None
     proc = None
@@ -341,7 +362,7 @@ def render_video(img_arr, stijl, bands_count, complexity, num_cols, base_rows, c
         tmp.close()
 
         cmd = [
-            "ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-vcodec", "rawvideo",
+            ffmpeg_exe, "-y", "-loglevel", "error", "-f", "rawvideo", "-vcodec", "rawvideo",
             "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", str(fps), "-i", "-",
             "-an", "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
             "-pix_fmt", "yuv420p", "-movflags", "+faststart", output_path
@@ -545,7 +566,7 @@ with col_canvas:
     if render_btn:
         if modus == "🎥 Motion (MP4)" and not check_ffmpeg():
             st.error("❌ FFmpeg is niet beschikbaar.")
-            st.info("Voeg `ffmpeg` toe aan packages.txt als je Streamlit Cloud gebruikt.")
+            st.info("Voeg `imageio-ffmpeg` toe aan requirements.txt, of installeer FFmpeg via packages.txt.")
             st.stop()
 
         with st.spinner("Afbeelding voorbereiden..."):
